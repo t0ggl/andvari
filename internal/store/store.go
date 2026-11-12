@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,9 @@ func NewStore(configDir, storageDir string) (*Store, error) {
 }
 
 func (s *Store) userFilePath(username string) (string, error) {
+	if strings.ContainsAny(username, "/\\\x00") || strings.Contains(username, "..") {
+		return "", ErrInvalidUsername
+	}
 	clean := filepath.Clean(username)
 	if clean == "." || clean == "/" || clean == ".." || filepath.Base(clean) != clean {
 		return "", ErrInvalidUsername
@@ -101,6 +105,9 @@ func (s *Store) userFilePath(username string) (string, error) {
 }
 
 func (s *Store) UserStoragePath(username string) (string, error) {
+	if strings.ContainsAny(username, "/\\\x00") || strings.Contains(username, "..") {
+		return "", ErrInvalidUsername
+	}
 	clean := filepath.Clean(username)
 	if clean == "." || clean == "/" || clean == ".." || filepath.Base(clean) != clean {
 		return "", ErrInvalidUsername

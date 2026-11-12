@@ -317,6 +317,10 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, `{"error":"cannot delete specified path"}`, http.StatusForbidden)
 				return
 			}
+			if errors.Is(err, ErrPathNotFound) {
+				http.Error(w, `{"error":"path not found"}`, http.StatusNotFound)
+				return
+			}
 			http.Error(w, `{"error":"failed to delete path"}`, http.StatusInternalServerError)
 			return
 		}

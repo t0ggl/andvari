@@ -35,10 +35,16 @@ type ExplorerResult struct {
 
 // resolveSafePath ensures requested path is safely confined to userDir.
 func resolveSafePath(userDir, requestedPath string) (string, error) {
+	if strings.Contains(requestedPath, "\x00") {
+		return "", ErrAccessDenied
+	}
+
+	// Normalize backslashes to forward slashes for cross-platform safety
+	normalized := strings.ReplaceAll(requestedPath, "\\", "/")
+
 	// Trim any leading slashes so filepath.Join doesn't ignore userDir
-	cleanReq := filepath.Clean(requestedPath)
+	cleanReq := filepath.Clean(normalized)
 	cleanReq = strings.TrimPrefix(cleanReq, "/")
-	cleanReq = strings.TrimPrefix(cleanReq, "\\")
 
 	fullPath := filepath.Clean(filepath.Join(userDir, cleanReq))
 
@@ -46,6 +52,18 @@ func resolveSafePath(userDir, requestedPath string) (string, error) {
 	if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
 		return "", ErrAccessDenied
 	}
+
+	// If the file or directory exists on disk, resolve symlinks to ensure
+	// symlinks cannot escape the canonical user directory.
+	if realUserDir, err := filepath.EvalSymlinks(userDir); err == nil {
+		if realTarget, err := filepath.EvalSymlinks(fullPath); err == nil {
+			realRel, err := filepath.Rel(realUserDir, realTarget)
+			if err != nil || strings.HasPrefix(realRel, "..") || realRel == ".." {
+				return "", ErrAccessDenied
+			}
+		}
+	}
+
 	return fullPath, nil
 }
 
@@ -168,6 +186,19 @@ func DeletePath(userDir, requestedPath string) error {
 	// Double check we are not deleting the user root
 	if targetPath == userDir {
 		return ErrCannotDeleteRoot
+	}
+
+	if realUserDir, err := filepath.EvalSymlinks(userDir); err == nil {
+		if realTarget, err := filepath.EvalSymlinks(targetPath); err == nil && realTarget == realUserDir {
+			return ErrCannotDeleteRoot
+		}
+	}
+
+	if _, err := os.Stat(targetPath); err != nil {
+		if os.IsNotExist(err) {
+			return ErrPathNotFound
+		}
+		return err
 	}
 
 	return os.RemoveAll(targetPath)
