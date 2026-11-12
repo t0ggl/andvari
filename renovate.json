@@ -16,6 +16,10 @@
     {
       "matchPackagePatterns": ["*"],
       "semanticCommitType": "chore"
+    },
+    {
+      "matchPackagePatterns": ["vite*", "@vitejs/*", "tailwindcss", "@tailwindcss/*"],
+      "groupName": "frontend tools"
     }
   ]
 }
