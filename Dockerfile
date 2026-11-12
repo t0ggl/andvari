@@ -23,7 +23,7 @@ COPY --from=frontend-builder /app/web/dist ./web/dist
 RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/andvari ./cmd/andvari
 
 # Stage 3: Minimal Non-Root Runtime
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 andvari && \
