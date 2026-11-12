@@ -1,0 +1,8 @@
+.git
+.github
+web/node_modules
+bin
+.system_generated
+.agents
+.gemini
+*.tmp*

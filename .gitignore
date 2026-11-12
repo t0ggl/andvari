@@ -1,0 +1,14 @@
+# Binaries
+bin/
+/andvari
+
+# Node
+web/node_modules/
+web/dist/*
+!web/dist/index.html
+npm-debug.log*
+
+# System & IDE
+.system_generated/
+.DS_Store
+*.tmp*
