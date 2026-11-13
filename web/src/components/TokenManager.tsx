@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { KeyRound, Plus, Trash2, ShieldCheck, Copy, Check, Clock, Calendar } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { KeyRound, Plus, Trash2, ShieldCheck, Copy, Check, Clock, Calendar, AlertTriangle } from 'lucide-react';
 import { TokenResponse } from '../types';
 
 interface Props {
@@ -22,7 +22,29 @@ export const TokenManager: React.FC<Props> = ({
   const [newRawToken, setNewRawToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Revocation state replacing native confirm/alert
+  const [tokenToRevoke, setTokenToRevoke] = useState<{ id: string; label: string } | null>(null);
+  const [revokeLoading, setRevokeLoading] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
   const canCreate = tokens.length < 2;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (tokenToRevoke) {
+          setTokenToRevoke(null);
+          setRevokeError(null);
+        } else if (isCreating) {
+          setIsCreating(false);
+          setError(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [tokenToRevoke, isCreating]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +65,7 @@ export const TokenManager: React.FC<Props> = ({
 
       setNewRawToken(data.token);
       setLabel('');
+      setIsCreating(false);
       onTokenGenerated();
     } catch (err: any) {
       setError(err.message);
@@ -51,19 +74,25 @@ export const TokenManager: React.FC<Props> = ({
     }
   };
 
-  const handleRevoke = async (id: string, tokenLabel: string) => {
-    if (!confirm(`Are you sure you want to revoke "${tokenLabel}"? Any WebDAV clients using this token will be disconnected.`)) {
-      return;
-    }
+  const handleRevokeConfirm = async () => {
+    if (!tokenToRevoke) return;
+    setRevokeLoading(true);
+    setRevokeError(null);
 
     try {
-      const res = await fetch(`/api/tokens?id=${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/tokens?id=${encodeURIComponent(tokenToRevoke.id)}`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error('Failed to revoke token');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to revoke token');
+      }
+      setTokenToRevoke(null);
       onTokenRevoked();
     } catch (err: any) {
-      alert(err.message);
+      setRevokeError(err.message);
+    } finally {
+      setRevokeLoading(false);
     }
   };
 
@@ -201,7 +230,8 @@ export const TokenManager: React.FC<Props> = ({
                 </div>
 
                 <button
-                  onClick={() => handleRevoke(tok.id, tok.label)}
+                  onClick={() => setTokenToRevoke({ id: tok.id, label: tok.label })}
+                  aria-label={`Revoke token ${tok.label}`}
                   className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-medium transition self-start sm:self-center"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -215,9 +245,19 @@ export const TokenManager: React.FC<Props> = ({
 
       {/* Creation Modal */}
       {isCreating && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4">
-            <h3 className="text-base font-semibold text-white">Generate New Token</h3>
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsCreating(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-token-title"
+            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4"
+          >
+            <h3 id="create-token-title" className="text-base font-semibold text-white">Generate New Token</h3>
             <p className="text-xs text-slate-400">
               Give your token an identifiable label (e.g. "Work Laptop", "Home Desktop", "Phone").
             </p>
@@ -238,6 +278,7 @@ export const TokenManager: React.FC<Props> = ({
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder={`Token ${tokens.length + 1}`}
+                  maxLength={64}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 transition"
                   autoFocus
                 />
@@ -260,6 +301,66 @@ export const TokenManager: React.FC<Props> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Revocation Confirmation Modal */}
+      {tokenToRevoke && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setTokenToRevoke(null);
+              setRevokeError(null);
+            }
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="revoke-token-title"
+            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-rose-500/10 text-rose-400 rounded-lg">
+                <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+              </div>
+              <div>
+                <h3 id="revoke-token-title" className="text-base font-semibold text-white">Revoke Token</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Are you sure you want to revoke <strong className="text-slate-200">"{tokenToRevoke.label}"</strong>? Any WebDAV clients using this token will be disconnected immediately.
+                </p>
+              </div>
+            </div>
+
+            {revokeError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded text-xs text-rose-400">
+                {revokeError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={revokeLoading}
+                onClick={() => {
+                  setTokenToRevoke(null);
+                  setRevokeError(null);
+                }}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={revokeLoading}
+                onClick={handleRevokeConfirm}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {revokeLoading ? 'Revoking...' : 'Revoke Token'}
+              </button>
+            </div>
           </div>
         </div>
       )}

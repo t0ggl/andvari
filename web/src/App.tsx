@@ -5,11 +5,12 @@ import { TokenManager } from './components/TokenManager';
 import { FileExplorer } from './components/FileExplorer';
 import { ConnectionModal } from './components/ConnectionModal';
 import { UserInfoResponse } from './types';
-import { Files, KeyRound, LogIn, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Files, KeyRound, LogIn, RefreshCw } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<UserInfoResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'files' | 'tokens'>('files');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [flashToken, setFlashToken] = useState<string | undefined>(undefined);
@@ -19,10 +20,16 @@ export const App: React.FC = () => {
       const res = await fetch('/api/me');
       if (res.status === 401) {
         setUser(null);
+        setFetchError(null);
+        window.location.href = '/auth/login';
         return;
+      }
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
       }
       const data: UserInfoResponse = await res.json();
       setUser(data);
+      setFetchError(null);
 
       if (data.flash_token) {
         setFlashToken(data.flash_token);
@@ -30,8 +37,10 @@ export const App: React.FC = () => {
       } else if (!data.first_login_completed) {
         setIsHelpOpen(true);
       }
-    } catch {
-      setUser(null);
+    } catch (err: any) {
+      if (!user) {
+        setFetchError(err.message || 'Unable to connect to Andvari server');
+      }
     } finally {
       setLoading(false);
     }
@@ -40,6 +49,12 @@ export const App: React.FC = () => {
   useEffect(() => {
     fetchUser();
   }, []);
+
+  useEffect(() => {
+    if (!loading && !user && !fetchError) {
+      window.location.href = '/auth/login';
+    }
+  }, [loading, user, fetchError]);
 
   const handleDismissFirstLogin = async () => {
     try {
@@ -84,6 +99,39 @@ export const App: React.FC = () => {
     );
   }
 
+  // Network / server connection error view
+  if (fetchError && !user) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4">
+        <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6 text-center">
+          <div className="flex justify-center">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <h1 className="text-lg font-bold text-white tracking-tight">Connection Failed</h1>
+            <p className="text-xs text-slate-400">
+              Unable to reach the Andvari server ({fetchError}).
+            </p>
+          </div>
+
+          <button
+            onClick={() => {
+              setLoading(true);
+              fetchUser();
+            }}
+            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-sky-600/20 transition cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Unauthenticated view
   if (!user) {
     return (
@@ -96,8 +144,13 @@ export const App: React.FC = () => {
           <div className="space-y-1">
             <h1 className="text-xl font-bold text-white tracking-tight">Andvari WebDAV</h1>
             <p className="text-xs text-slate-400">
-              Multi-tenant shared cloud storage. Sign in using your single sign-on identity to manage tokens and files.
+              Redirecting to single sign-on...
             </p>
+          </div>
+
+          <div className="flex items-center justify-center gap-2 py-2 text-sky-400 text-xs">
+            <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+            <span>Redirecting to login...</span>
           </div>
 
           <a
@@ -107,11 +160,6 @@ export const App: React.FC = () => {
             <LogIn className="w-4 h-4" />
             <span>Sign in with SSO</span>
           </a>
-
-          <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Argon2id Hashed · OIDC Secured</span>
-          </div>
         </div>
       </div>
     );

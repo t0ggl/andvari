@@ -56,6 +56,7 @@ export const Navbar: React.FC<Props> = ({
               <span className="text-slate-400 hidden sm:inline">Impersonate:</span>
               <select
                 value={user.is_impersonating ? user.effective_username : ''}
+                aria-label="Select tenant to impersonate"
                 onChange={(e) => {
                   const val = e.target.value;
                   if (!val) {
@@ -83,6 +84,7 @@ export const Navbar: React.FC<Props> = ({
           {/* Help Button */}
           <button
             onClick={onOpenHelp}
+            aria-label="How to Connect via WebDAV"
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg text-xs font-medium text-slate-300 transition"
           >
             <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
@@ -109,6 +111,7 @@ export const Navbar: React.FC<Props> = ({
           {/* Logout */}
           <button
             onClick={onLogout}
+            aria-label="Log Out"
             className="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition"
             title="Log Out"
           >
