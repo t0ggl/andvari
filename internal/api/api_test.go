@@ -346,3 +346,110 @@ func TestAPIQuotas(t *testing.T) {
 		t.Fatalf("expected quota_bytes 4096, got: %v", meResp2.QuotaBytes)
 	}
 }
+
+func TestAPITokenRename(t *testing.T) {
+	api, s, sm, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	user, _, err := s.EnsureUserProvisioned("emily")
+	if err != nil {
+		t.Fatalf("failed to provision emily: %v", err)
+	}
+	tokenID := user.Tokens[0].ID
+
+	session := &auth.SessionData{
+		Username: "emily",
+		Groups:   []string{"users"},
+	}
+
+	// 1. Rename with PATCH
+	patchBody := bytes.NewBufferString(fmt.Sprintf(`{"id":%q,"label":"Home Desktop"}`, tokenID))
+	req := httptest.NewRequest("PATCH", "/api/tokens", patchBody)
+	addSessionCookie(t, req, sm, session)
+	rec := httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on rename PATCH, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var renameResp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&renameResp); err != nil {
+		t.Fatalf("failed to decode rename response: %v", err)
+	}
+	tokInfo := renameResp["token_info"].(map[string]interface{})
+	if tokInfo["label"] != "Home Desktop" || tokInfo["id"] != tokenID {
+		t.Fatalf("unexpected token_info: %+v", tokInfo)
+	}
+
+	// 2. Rename with PUT and query param ID
+	putBody := bytes.NewBufferString(`{"label":"Work Laptop"}`)
+	req = httptest.NewRequest("PUT", "/api/tokens?id="+tokenID, putBody)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on rename PUT, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. Verify via HandleMe
+	req = httptest.NewRequest("GET", "/api/me", nil)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleMe(rec, req)
+
+	var meResp UserInfoResponse
+	_ = json.NewDecoder(rec.Body).Decode(&meResp)
+	if len(meResp.Tokens) != 1 || meResp.Tokens[0].Label != "Work Laptop" {
+		t.Fatalf("expected updated token label in /api/me to be 'Work Laptop', got %q", meResp.Tokens[0].Label)
+	}
+
+	// 4. Unauthenticated rename -> 401
+	body := bytes.NewBufferString(fmt.Sprintf(`{"id":%q,"label":"Sneaky"}`, tokenID))
+	req = httptest.NewRequest("PATCH", "/api/tokens", body)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated rename, got %d", rec.Code)
+	}
+
+	// 5. Missing token ID -> 400
+	body = bytes.NewBufferString(`{"label":"No ID"}`)
+	req = httptest.NewRequest("PATCH", "/api/tokens", body)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing token ID, got %d", rec.Code)
+	}
+
+	// 6. Empty label -> 400
+	body = bytes.NewBufferString(fmt.Sprintf(`{"id":%q,"label":"   "}`, tokenID))
+	req = httptest.NewRequest("PATCH", "/api/tokens", body)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty label, got %d", rec.Code)
+	}
+
+	// 7. Non-existent token ID -> 404
+	body = bytes.NewBufferString(`{"id":"non-existent-uuid","label":"Valid Label"}`)
+	req = httptest.NewRequest("PATCH", "/api/tokens", body)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent token, got %d", rec.Code)
+	}
+
+	// 8. Method not allowed (POST or GET) -> 405
+	req = httptest.NewRequest("GET", "/api/tokens", nil)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenameToken(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for GET on HandleRenameToken, got %d", rec.Code)
+	}
+}

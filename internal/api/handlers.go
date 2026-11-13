@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
@@ -192,6 +193,76 @@ func (a *API) HandleRevokeToken(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (a *API) HandleRenameToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	effectiveUser, _ := a.getEffectiveUser(session)
+
+	var req struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	tokenID := req.ID
+	if tokenID == "" {
+		tokenID = r.URL.Query().Get("id")
+	}
+	if tokenID == "" {
+		http.Error(w, `{"error":"missing token id"}`, http.StatusBadRequest)
+		return
+	}
+
+	newLabel := strings.TrimSpace(req.Label)
+	if newLabel == "" {
+		http.Error(w, `{"error":"token label cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+
+	updatedToken, err := a.store.RenameToken(effectiveUser, tokenID, newLabel)
+	if err != nil {
+		if errors.Is(err, store.ErrTokenNotFound) {
+			http.Error(w, `{"error":"token not found"}`, http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, store.ErrEmptyTokenLabel) {
+			http.Error(w, `{"error":"token label cannot be empty"}`, http.StatusBadRequest)
+			return
+		}
+		http.Error(w, `{"error":"failed to rename token"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var lastUsed *string
+	if updatedToken.LastUsedAt != nil {
+		s := updatedToken.LastUsedAt.Format("2006-01-02 15:04:05 MST")
+		lastUsed = &s
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"token_info": TokenResponse{
+			ID:         updatedToken.ID,
+			Label:      updatedToken.Label,
+			CreatedAt:  updatedToken.CreatedAt.Format("2006-01-02 15:04:05 MST"),
+			LastUsedAt: lastUsed,
+		},
+	})
 }
 
 func (a *API) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Request) {

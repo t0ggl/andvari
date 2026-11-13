@@ -25,6 +25,7 @@ var (
 	ErrMaxTokensReached = errors.New("maximum of 20 active tokens allowed; revoke an existing token to create a new one")
 	ErrTokenNotFound    = errors.New("token not found")
 	ErrInvalidUsername  = errors.New("invalid username")
+	ErrEmptyTokenLabel  = errors.New("token label cannot be empty")
 )
 
 type TokenInfo struct {
@@ -329,6 +330,38 @@ func (s *Store) RevokeToken(username, tokenID string) error {
 
 	user.Tokens = newTokens
 	return s.saveUser(user)
+}
+
+func (s *Store) RenameToken(username, tokenID, newLabel string) (*TokenInfo, error) {
+	newLabel = strings.TrimSpace(newLabel)
+	if newLabel == "" {
+		return nil, ErrEmptyTokenLabel
+	}
+
+	user, err := s.GetUser(username)
+	if err != nil {
+		return nil, err
+	}
+
+	var updatedToken *TokenInfo
+	for i := range user.Tokens {
+		if user.Tokens[i].ID == tokenID {
+			user.Tokens[i].Label = newLabel
+			updatedToken = &user.Tokens[i]
+			break
+		}
+	}
+
+	if updatedToken == nil {
+		return nil, ErrTokenNotFound
+	}
+
+	if err := s.saveUser(user); err != nil {
+		return nil, err
+	}
+
+	tokenCopy := *updatedToken
+	return &tokenCopy, nil
 }
 
 func (s *Store) SetFirstLoginCompleted(username string) error {

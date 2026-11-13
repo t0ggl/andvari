@@ -74,6 +74,8 @@ func main() {
 			apiServer.HandleGenerateToken(w, r)
 		case http.MethodDelete:
 			apiServer.HandleRevokeToken(w, r)
+		case http.MethodPatch, http.MethodPut:
+			apiServer.HandleRenameToken(w, r)
 		default:
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		}

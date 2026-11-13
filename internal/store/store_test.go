@@ -169,3 +169,65 @@ func TestStoreQuotas(t *testing.T) {
 		t.Fatalf("expected quota reset to 1000, got %d", quota)
 	}
 }
+
+func TestStoreRenameToken(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "andvari-rename-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configDir := tmpDir + "/config"
+	storageDir := tmpDir + "/data"
+
+	s, err := NewStore(configDir, storageDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	user, _, err := s.EnsureUserProvisioned("bob")
+	if err != nil {
+		t.Fatalf("EnsureUserProvisioned failed: %v", err)
+	}
+
+	tokenID := user.Tokens[0].ID
+
+	// 1. Rename existing token
+	updated, err := s.RenameToken("bob", tokenID, "Work Laptop")
+	if err != nil {
+		t.Fatalf("RenameToken failed: %v", err)
+	}
+	if updated.Label != "Work Laptop" {
+		t.Fatalf("expected label 'Work Laptop', got %q", updated.Label)
+	}
+	if updated.ID != tokenID {
+		t.Fatalf("expected token ID to remain unchanged, got %q", updated.ID)
+	}
+
+	// 2. Verify GetUser returns updated token label
+	freshUser, err := s.GetUser("bob")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if len(freshUser.Tokens) != 1 || freshUser.Tokens[0].Label != "Work Laptop" {
+		t.Fatalf("expected token label in store to be 'Work Laptop', got %q", freshUser.Tokens[0].Label)
+	}
+
+	// 3. Rename with empty or whitespace label fails
+	if _, err := s.RenameToken("bob", tokenID, ""); err != ErrEmptyTokenLabel {
+		t.Fatalf("expected ErrEmptyTokenLabel for empty label, got %v", err)
+	}
+	if _, err := s.RenameToken("bob", tokenID, "   "); err != ErrEmptyTokenLabel {
+		t.Fatalf("expected ErrEmptyTokenLabel for whitespace label, got %v", err)
+	}
+
+	// 4. Rename with non-existent tokenID fails
+	if _, err := s.RenameToken("bob", "non-existent-id", "New Name"); err != ErrTokenNotFound {
+		t.Fatalf("expected ErrTokenNotFound, got %v", err)
+	}
+
+	// 5. Rename for non-existent user fails
+	if _, err := s.RenameToken("nonexistent", tokenID, "New Name"); err != ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Plus, Trash2, ShieldCheck, Copy, Check, Clock, Calendar, AlertTriangle } from 'lucide-react';
+import { KeyRound, Plus, Trash2, ShieldCheck, Copy, Check, Clock, Calendar, AlertTriangle, Pencil } from 'lucide-react';
 import { TokenResponse } from '../types';
 
 interface Props {
@@ -7,6 +7,7 @@ interface Props {
   effectiveUsername: string;
   onTokenGenerated: () => void;
   onTokenRevoked: () => void;
+  onTokenRenamed?: () => void;
 }
 
 const MAX_TOKENS = 20;
@@ -16,6 +17,7 @@ export const TokenManager: React.FC<Props> = ({
   effectiveUsername,
   onTokenGenerated,
   onTokenRevoked,
+  onTokenRenamed,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [label, setLabel] = useState('');
@@ -29,12 +31,21 @@ export const TokenManager: React.FC<Props> = ({
   const [revokeLoading, setRevokeLoading] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
+  // Rename state
+  const [tokenToRename, setTokenToRename] = useState<{ id: string; label: string } | null>(null);
+  const [renameLabel, setRenameLabel] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
   const canCreate = tokens.length < MAX_TOKENS;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (tokenToRevoke) {
+        if (tokenToRename) {
+          setTokenToRename(null);
+          setRenameError(null);
+        } else if (tokenToRevoke) {
           setTokenToRevoke(null);
           setRevokeError(null);
         } else if (isCreating) {
@@ -46,7 +57,7 @@ export const TokenManager: React.FC<Props> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tokenToRevoke, isCreating]);
+  }, [tokenToRename, tokenToRevoke, isCreating]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,6 +106,47 @@ export const TokenManager: React.FC<Props> = ({
       setRevokeError(err.message);
     } finally {
       setRevokeLoading(false);
+    }
+  };
+
+  const handleRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenToRename) return;
+
+    const trimmed = renameLabel.trim();
+    if (!trimmed) {
+      setRenameError('Token label cannot be empty');
+      return;
+    }
+
+    if (trimmed === tokenToRename.label) {
+      setTokenToRename(null);
+      setRenameError(null);
+      return;
+    }
+
+    setRenameLoading(true);
+    setRenameError(null);
+
+    try {
+      const res = await fetch('/api/tokens', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tokenToRename.id, label: trimmed }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to rename token');
+      }
+
+      setTokenToRename(null);
+      setRenameError(null);
+      onTokenRenamed?.();
+    } catch (err: any) {
+      setRenameError(err.message || 'Failed to rename token');
+    } finally {
+      setRenameLoading(false);
     }
   };
 
@@ -212,6 +264,19 @@ export const TokenManager: React.FC<Props> = ({
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-white">{tok.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTokenToRename({ id: tok.id, label: tok.label });
+                        setRenameLabel(tok.label);
+                        setRenameError(null);
+                      }}
+                      aria-label={`Rename token ${tok.label}`}
+                      title="Rename token"
+                      className="text-slate-500 hover:text-slate-300 p-0.5 rounded hover:bg-slate-800 transition cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
                     <span className="font-mono text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
                       ID: {tok.id.slice(0, 8)}...
                     </span>
@@ -231,14 +296,29 @@ export const TokenManager: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setTokenToRevoke({ id: tok.id, label: tok.label })}
-                  aria-label={`Revoke token ${tok.label}`}
-                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-medium transition self-start sm:self-center"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Revoke</span>
-                </button>
+                <div className="flex items-center gap-2 self-start sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTokenToRename({ id: tok.id, label: tok.label });
+                      setRenameLabel(tok.label);
+                      setRenameError(null);
+                    }}
+                    aria-label={`Rename token ${tok.label}`}
+                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-medium transition cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Rename</span>
+                  </button>
+                  <button
+                    onClick={() => setTokenToRevoke({ id: tok.id, label: tok.label })}
+                    aria-label={`Revoke token ${tok.label}`}
+                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-medium transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Revoke</span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -300,6 +380,78 @@ export const TokenManager: React.FC<Props> = ({
                   className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50"
                 >
                   {loading ? 'Generating...' : 'Generate Token'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Token Modal */}
+      {tokenToRename && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setTokenToRename(null);
+              setRenameError(null);
+            }
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-token-title"
+            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-center gap-2">
+              <Pencil className="w-5 h-5 text-sky-400" />
+              <h3 id="rename-token-title" className="text-base font-semibold text-white">Rename Token</h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              Update the label for this token. WebDAV clients using this token will remain connected.
+            </p>
+
+            {renameError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded text-xs text-rose-400">
+                {renameError}
+              </div>
+            )}
+
+            <form onSubmit={handleRenameSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Token Label
+                </label>
+                <input
+                  type="text"
+                  value={renameLabel}
+                  onChange={(e) => setRenameLabel(e.target.value)}
+                  placeholder="Token Label"
+                  maxLength={64}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 transition"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={renameLoading}
+                  onClick={() => {
+                    setTokenToRename(null);
+                    setRenameError(null);
+                  }}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={renameLoading}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {renameLoading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

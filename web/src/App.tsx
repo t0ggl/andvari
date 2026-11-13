@@ -287,6 +287,7 @@ export const App: React.FC = () => {
             effectiveUsername={user.effective_username}
             onTokenGenerated={fetchUser}
             onTokenRevoked={fetchUser}
+            onTokenRenamed={fetchUser}
           />
         )}
       </main>
