@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-13T05:15:00Z",
+  "title": "Design System: Andvari",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Glacial Sky",
+        "canonical": "#0ea5e9",
+        "tonalRamp": ["#082f49", "#0c4a6e", "#075985", "#0369a1", "#0284c7", "#0ea5e9", "#38bdf8", "#bae6fd"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Abyssal Slate Canvas",
+        "canonical": "#020617",
+        "tonalRamp": ["#020617", "#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#f8fafc"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Vault Panel Slate",
+        "canonical": "#0f172a",
+        "tonalRamp": ["#020617", "#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#f8fafc"]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Molten Amber",
+        "canonical": "#f59e0b",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fef3c7"]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Signal Rose",
+        "canonical": "#f43f5e",
+        "tonalRamp": ["#4c0519", "#881337", "#9f1239", "#be123c", "#e11d48", "#f43f5e", "#fb7185", "#ffe4e6"]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Vault Emerald",
+        "canonical": "#10b981",
+        "tonalRamp": ["#022c22", "#064e3b", "#065f46", "#047857", "#059669", "#10b981", "#34d399", "#d1fae5"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Hero headers and brand title." },
+      "headline": { "displayName": "Headline", "purpose": "Section titles and modal dialog titles." },
+      "title": { "displayName": "Title", "purpose": "Card titles and table column headers." },
+      "body": { "displayName": "Body", "purpose": "Standard prose and table row descriptions." },
+      "label": { "displayName": "Label / Mono", "purpose": "WebDAV tokens, paths, hashes, and CLI snippets." }
+    },
+    "shadows": [
+      { "name": "modal-elevation", "value": "0 25px 50px -12px rgba(0, 0, 0, 0.7)", "purpose": "Elevation for overlay dialogs and modals over darkened backdrop." },
+      { "name": "none", "value": "none", "purpose": "Flat-at-rest philosophy across all cards, panels, and tables." }
+    ],
+    "motion": [
+      { "name": "transition-fast", "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing and duration for interactive states." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary call to action for generating tokens or confirming dialogs.",
+      "html": "<button class=\"ds-btn-primary\">Generate Token</button>",
+      "css": ".ds-btn-primary { background: #0ea5e9; color: #ffffff; padding: 8px 14px; font-size: 12px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: background 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: #0284c7; } .ds-btn-primary:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action for navigation, canceling, or opening help guides.",
+      "html": "<button class=\"ds-btn-secondary\">How to Connect</button>",
+      "css": ".ds-btn-secondary { background: #0f172a; color: #94a3b8; border: 1px solid #1e293b; padding: 8px 14px; font-size: 12px; font-weight: 500; border-radius: 8px; cursor: pointer; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-secondary:hover { background: #1e293b; color: #f8fafc; border-color: #334155; } .ds-btn-secondary:focus-visible { outline: 2px solid #0ea5e9; outline-offset: 2px; }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Revoke token or delete file confirmation trigger.",
+      "html": "<button class=\"ds-btn-danger\">Revoke</button>",
+      "css": ".ds-btn-danger { background: rgba(244, 63, 94, 0.1); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.2); padding: 6px 10px; font-size: 12px; font-weight: 500; border-radius: 8px; cursor: pointer; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-danger:hover { background: rgba(244, 63, 94, 0.2); border-color: rgba(244, 63, 94, 0.4); } .ds-btn-danger:focus-visible { outline: 2px solid #f43f5e; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "Form input field for token labeling and filtering.",
+      "html": "<input type=\"text\" class=\"ds-input\" placeholder=\"e.g. MacBook Pro Sync\" />",
+      "css": ".ds-input { background: #020617; border: 1px solid #1e293b; border-radius: 8px; color: #ffffff; padding: 8px 12px; font-size: 14px; width: 100%; box-sizing: border-box; } .ds-input:focus { outline: none; border-color: #0ea5e9; box-shadow: 0 0 0 1px #0ea5e9; } .ds-input::placeholder { color: #64748b; }"
+    },
+    {
+      "name": "Vault Container Card",
+      "kind": "card",
+      "refersTo": "card-container",
+      "description": "Standard surface panel for tokens, files, and configuration.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Access Tokens</div><div class=\"ds-card-desc\">Manage WebDAV client credentials.</div></div>",
+      "css": ".ds-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; color: #f8fafc; } .ds-card-title { font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 4px; } .ds-card-desc { font-size: 12px; color: #94a3b8; }"
+    },
+    {
+      "name": "Navigation Tab Pill",
+      "kind": "nav",
+      "refersTo": "nav-pill",
+      "description": "Top-level view switcher between Tokens and Files.",
+      "html": "<div class=\"ds-nav-pill-group\"><button class=\"ds-nav-pill ds-nav-pill-active\">Tokens</button><button class=\"ds-nav-pill\">Files</button></div>",
+      "css": ".ds-nav-pill-group { display: inline-flex; background: rgba(15, 23, 42, 0.8); padding: 4px; border-radius: 12px; border: 1px solid rgba(30, 41, 59, 0.8); gap: 4px; } .ds-nav-pill { background: transparent; border: none; color: #94a3b8; font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; cursor: pointer; transition: all 150ms; } .ds-nav-pill:hover { color: #f8fafc; } .ds-nav-pill-active { background: #0284c7; color: #ffffff; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Deep Subterranean Vault",
+    "overview": "Andvari embodies the quiet, unwavering durability of an impenetrable stone vault. Named after the mythical Norse dwarf who guarded precious subterranean treasures, the interface is uncompromisingly dark, disciplined, and utilitarian. Every screen presents dense, legible information against an abyssal slate backdrop, punctuated by crystalline glacial-sky signals. It does not entertain or cajole; it serves operators who need high-assurance, multi-tenant file storage and effortless WebDAV connectivity.\n\nThe aesthetic rejects modern consumer SaaS vanity—no pastel gradients, floating card shadows, whimsical marketing copy, or decorative cartoon spot illustrations. Instead, surfaces are flat at rest, with crisp 1px borders delineating functional areas. Density is compact yet breathable, designed for rapid visual scanning across tables, tokens, paths, and connection recipes.",
+    "keyCharacteristics": [
+      "Abyssal Dark Canvas: Deep obsidian and slate tones create a zero-glare, terminal-grade environment for technical operators.",
+      "Glacial Sky Signals: The single primary accent (#0ea5e9) is reserved strictly for interactive focus, active tabs, and primary commands.",
+      "Tonal Layering Over Shadows: Depth is communicated via stepped shades of slate rather than ambient blur or drop shadows.",
+      "Precision Monospace Utility: Paths, hashes, tokens, and CLI snippets use dedicated monospace formatting with instant 1-click copy affordances."
+    ],
+    "rules": [
+      {
+        "name": "The Rarity of Sky Rule",
+        "body": "Glacial Sky (#0ea5e9) must occupy less than 5% of any viewport. If everything glows, nothing is urgent.",
+        "section": "colors"
+      },
+      {
+        "name": "The No-Whiteout Rule",
+        "body": "The canvas is permanently dark (#020617). No light mode, no bright white modal bodies, and no blinding flash transitions are permitted.",
+        "section": "colors"
+      },
+      {
+        "name": "The Monospace Discipline Rule",
+        "body": "All credentials, WebDAV URLs, file sizes, and terminal commands must be rendered in monospace. Never display a token in proportional text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-at-Rest Rule",
+        "body": "Panels, cards, and tables never cast shadows when resting. Elevation is expressed strictly by border color and background shade. Shadows are reserved exclusively for floating modal dialogs.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do wrap every code snippet, token, and path with an immediate 1-click copy button.",
+      "Do preserve 1px solid #1e293b borders on all container edges to maintain crisp structural boundaries.",
+      "Do dismiss modals on Escape keypress and backdrop click.",
+      "Do use font-mono with muted colors for file sizes, timestamps, and directory breadcrumbs.",
+      "Do show explicit loading spinners on buttons executing async network operations (revoke, delete, generate)."
+    ],
+    "donts": [
+      "Don't use browser-native alert(), confirm(), or prompt() dialogs.",
+      "Don't use pastel or multicolor gradient fills on buttons, cards, or hero banners.",
+      "Don't invent light mode colors or introduce light backgrounds anywhere in the UI.",
+      "Don't add decorative illustrations or marketing cartoons; maintain utilitarian technical rigor.",
+      "Don't hide active tokens without warning; prompt users explicitly before closing uncopied credentials."
+    ]
+  }
+}
