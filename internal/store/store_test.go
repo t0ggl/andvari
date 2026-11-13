@@ -86,3 +86,77 @@ func TestStoreOperations(t *testing.T) {
 		t.Fatalf("expected valid third token")
 	}
 }
+
+func TestStoreQuotas(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "andvari-quota-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configDir := tmpDir + "/config"
+	storageDir := tmpDir + "/data"
+
+	// 1000 bytes default quota
+	s, err := NewStore(configDir, storageDir, 1000)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	_, _, err = s.EnsureUserProvisioned("quotauser")
+	if err != nil {
+		t.Fatalf("EnsureUserProvisioned failed: %v", err)
+	}
+
+	// Initial usage should be 0, quota should be 1000
+	used, quota, err := s.GetEffectiveQuota("quotauser")
+	if err != nil {
+		t.Fatalf("GetEffectiveQuota failed: %v", err)
+	}
+	if used != 0 || quota != 1000 {
+		t.Fatalf("expected 0 used and 1000 quota, got used=%d quota=%d", used, quota)
+	}
+
+	// Write a 250 byte file to user storage
+	userDir, _ := s.UserStoragePath("quotauser")
+	testFile := userDir + "/sample.txt"
+	if err := os.WriteFile(testFile, make([]byte, 250), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Invalidate cache and check
+	s.InvalidateUsage("quotauser")
+	used, quota, err = s.GetEffectiveQuota("quotauser")
+	if err != nil {
+		t.Fatalf("GetEffectiveQuota failed: %v", err)
+	}
+	if used != 250 || quota != 1000 {
+		t.Fatalf("expected 250 used and 1000 quota, got used=%d quota=%d", used, quota)
+	}
+
+	// Set custom user quota to 5000 bytes
+	var customQuota int64 = 5000
+	if err := s.SetUserQuota("quotauser", &customQuota); err != nil {
+		t.Fatalf("SetUserQuota failed: %v", err)
+	}
+
+	used, quota, err = s.GetEffectiveQuota("quotauser")
+	if err != nil {
+		t.Fatalf("GetEffectiveQuota failed: %v", err)
+	}
+	if used != 250 || quota != 5000 {
+		t.Fatalf("expected 250 used and 5000 quota, got used=%d quota=%d", used, quota)
+	}
+
+	// Reset user quota back to default (nil)
+	if err := s.SetUserQuota("quotauser", nil); err != nil {
+		t.Fatalf("SetUserQuota nil failed: %v", err)
+	}
+	_, quota, err = s.GetEffectiveQuota("quotauser")
+	if err != nil {
+		t.Fatalf("GetEffectiveQuota failed: %v", err)
+	}
+	if quota != 1000 {
+		t.Fatalf("expected quota reset to 1000, got %d", quota)
+	}
+}

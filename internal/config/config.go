@@ -2,7 +2,9 @@ package config
 
 import (
 	"crypto/rand"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +21,7 @@ type Config struct {
 	OIDCUsernameClaim string
 	SessionSecret     []byte
 	DevMode           bool
+	DefaultQuotaBytes int64
 }
 
 func getEnv(key, defaultVal string) string {
@@ -26,6 +29,51 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// ParseBytes parses a human-readable size string (e.g. "10GB", "500MB", "1.5GiB", "1048576").
+// Returns 0 if empty, "0", or "unlimited".
+func ParseBytes(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" || s == "0" || s == "UNLIMITED" || s == "NONE" || s == "-1" {
+		return 0, nil
+	}
+
+	clean := s
+	if strings.HasSuffix(clean, "IB") {
+		clean = strings.TrimSuffix(clean, "IB")
+	} else if strings.HasSuffix(clean, "B") && len(clean) > 1 && !strings.HasSuffix(clean, "KB") && !strings.HasSuffix(clean, "MB") && !strings.HasSuffix(clean, "GB") && !strings.HasSuffix(clean, "TB") {
+		clean = strings.TrimSuffix(clean, "B")
+	} else if strings.HasSuffix(clean, "B") {
+		clean = strings.TrimSuffix(clean, "B")
+	}
+
+	var multiplier int64 = 1
+	clean = strings.TrimSpace(clean)
+	if strings.HasSuffix(clean, "K") {
+		multiplier = 1024
+		clean = strings.TrimSuffix(clean, "K")
+	} else if strings.HasSuffix(clean, "M") {
+		multiplier = 1024 * 1024
+		clean = strings.TrimSuffix(clean, "M")
+	} else if strings.HasSuffix(clean, "G") {
+		multiplier = 1024 * 1024 * 1024
+		clean = strings.TrimSuffix(clean, "G")
+	} else if strings.HasSuffix(clean, "T") {
+		multiplier = 1024 * 1024 * 1024 * 1024
+		clean = strings.TrimSuffix(clean, "T")
+	}
+
+	clean = strings.TrimSpace(clean)
+	val, err := strconv.ParseFloat(clean, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	if val <= 0 {
+		return 0, nil
+	}
+
+	return int64(val * float64(multiplier)), nil
 }
 
 func Load() *Config {
@@ -45,6 +93,9 @@ func Load() *Config {
 
 	devMode := strings.ToLower(os.Getenv("DEV_MODE")) == "true" || strings.ToLower(os.Getenv("DEV_MODE")) == "1"
 
+	defaultQuotaStr := getEnv("DEFAULT_QUOTA", "")
+	defaultQuotaBytes, _ := ParseBytes(defaultQuotaStr)
+
 	return &Config{
 		ConfigPath:        getEnv("CONFIG_PATH", "/config"),
 		StoragePath:       getEnv("STORAGE_PATH", "/data"),
@@ -58,6 +109,7 @@ func Load() *Config {
 		OIDCUsernameClaim: getEnv("OIDC_USERNAME_CLAIM", "preferred_username"),
 		SessionSecret:     sessionSecret,
 		DevMode:           devMode,
+		DefaultQuotaBytes: defaultQuotaBytes,
 	}
 }
 

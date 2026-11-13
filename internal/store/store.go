@@ -42,23 +42,31 @@ type UserMeta struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	Tokens      []TokenInfo     `json:"tokens"`
 	Preferences UserPreferences `json:"preferences"`
+	QuotaBytes  *int64          `json:"quota_bytes,omitempty"`
 }
 
 type Store struct {
-	configDir   string
-	storageDir  string
-	startupSalt []byte
-	mu          sync.RWMutex
+	configDir         string
+	storageDir        string
+	defaultQuotaBytes int64
+	startupSalt       []byte
+	mu                sync.RWMutex
 
 	// In-memory cache for user metadata: username -> cachedMeta
 	userCache map[string]*cachedMeta
 	// In-memory token verification cache: hmac(startupSalt, username+":"+token) -> tokenCacheEntry
 	tokenCache map[string]*tokenCacheEntry
+	// In-memory cache for storage usage: username -> cachedUsage
+	usageCache map[string]*cachedUsage
 }
 
 type cachedMeta struct {
 	modTime time.Time
 	meta    *UserMeta
+}
+
+type cachedUsage struct {
+	bytes int64
 }
 
 type tokenCacheEntry struct {
@@ -67,7 +75,7 @@ type tokenCacheEntry struct {
 	validUntil time.Time
 }
 
-func NewStore(configDir, storageDir string) (*Store, error) {
+func NewStore(configDir, storageDir string, defaultQuotaBytes ...int64) (*Store, error) {
 	usersConfigDir := filepath.Join(configDir, "users")
 	if err := os.MkdirAll(usersConfigDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create config dir %s: %w", usersConfigDir, err)
@@ -84,12 +92,19 @@ func NewStore(configDir, storageDir string) (*Store, error) {
 		return nil, fmt.Errorf("failed to generate random startup salt: %w", err)
 	}
 
+	var quota int64
+	if len(defaultQuotaBytes) > 0 {
+		quota = defaultQuotaBytes[0]
+	}
+
 	return &Store{
-		configDir:   configDir,
-		storageDir:  storageDir,
-		startupSalt: startupSalt,
-		userCache:   make(map[string]*cachedMeta),
-		tokenCache:  make(map[string]*tokenCacheEntry),
+		configDir:         configDir,
+		storageDir:        storageDir,
+		defaultQuotaBytes: quota,
+		startupSalt:       startupSalt,
+		userCache:         make(map[string]*cachedMeta),
+		tokenCache:        make(map[string]*tokenCacheEntry),
+		usageCache:        make(map[string]*cachedUsage),
 	}, nil
 }
 
@@ -434,3 +449,128 @@ func (s *Store) computeHMACKey(username, rawToken string) string {
 	mac.Write([]byte(rawToken))
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
+// SetDefaultQuota updates the fallback quota in bytes (0 = unlimited).
+func (s *Store) SetDefaultQuota(bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultQuotaBytes = bytes
+}
+
+// DefaultQuota returns the default quota in bytes (0 = unlimited).
+func (s *Store) DefaultQuota() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.defaultQuotaBytes
+}
+
+// GetUserStorageUsage calculates or returns cached disk space used by a user in bytes.
+// Usage is calculated from disk once on initial access and maintained in-memory via delta updates.
+func (s *Store) GetUserStorageUsage(username string) (int64, error) {
+	s.mu.RLock()
+	cached, ok := s.usageCache[username]
+	if ok {
+		bytes := cached.bytes
+		s.mu.RUnlock()
+		return bytes, nil
+	}
+	s.mu.RUnlock()
+
+	userDir, err := s.UserStoragePath(username)
+	if err != nil {
+		return 0, err
+	}
+
+	var totalSize int64
+	_ = filepath.WalkDir(userDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			if fi, err := d.Info(); err == nil {
+				totalSize += fi.Size()
+			}
+		}
+		return nil
+	})
+
+	s.mu.Lock()
+	s.usageCache[username] = &cachedUsage{
+		bytes: totalSize,
+	}
+	s.mu.Unlock()
+
+	return totalSize, nil
+}
+
+// InvalidateUsage clears the cached storage usage for a user.
+func (s *Store) InvalidateUsage(username string) {
+	s.mu.Lock()
+	delete(s.usageCache, username)
+	s.mu.Unlock()
+}
+
+// AddUsageDelta adjusts the in-memory cached storage usage by delta bytes without walking the disk.
+func (s *Store) AddUsageDelta(username string, delta int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.usageCache[username]; ok {
+		cached.bytes += delta
+		if cached.bytes < 0 {
+			cached.bytes = 0
+		}
+	}
+}
+
+// GetUserQuotaLimit returns the effective quota limit in bytes without computing current usage (0 = unlimited).
+func (s *Store) GetUserQuotaLimit(username string) (int64, error) {
+	user, err := s.GetUser(username)
+	if err != nil {
+		return 0, err
+	}
+	if user.QuotaBytes != nil {
+		return *user.QuotaBytes, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.defaultQuotaBytes, nil
+}
+
+// GetEffectiveQuota returns the user's used bytes and their effective quota limit in bytes (0 = unlimited).
+func (s *Store) GetEffectiveQuota(username string) (usedBytes int64, quotaBytes int64, err error) {
+	user, err := s.GetUser(username)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	usedBytes, err = s.GetUserStorageUsage(username)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	s.mu.RLock()
+	quotaBytes = s.defaultQuotaBytes
+	s.mu.RUnlock()
+
+	if user.QuotaBytes != nil {
+		quotaBytes = *user.QuotaBytes
+	}
+
+	return usedBytes, quotaBytes, nil
+}
+
+// SetUserQuota sets or overrides a user's quota in bytes. If quotaBytes is nil, resets to default.
+func (s *Store) SetUserQuota(username string, quotaBytes *int64) error {
+	if quotaBytes != nil && *quotaBytes < 0 {
+		return errors.New("quota cannot be negative")
+	}
+
+	user, err := s.GetUser(username)
+	if err != nil {
+		return err
+	}
+
+	user.QuotaBytes = quotaBytes
+	return s.saveUser(user)
+}
+

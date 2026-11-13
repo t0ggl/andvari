@@ -80,8 +80,27 @@ docker run -d \
   -e OIDC_CLIENT_SECRET="secret" \
   -e OIDC_REDIRECT_URL="https://andvari.example.com/auth/callback" \
   -e OIDC_ADMIN_GROUP="admin" \
+  -e DEFAULT_QUOTA="10GB" \
   ghcr.io/t0ggl/andvari:latest
 ```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `CONFIG_PATH` | `/config` | Path where user configuration JSON files are stored |
+| `STORAGE_PATH` | `/data` | Path where user file directories are stored |
+| `LISTEN_ADDR` | `:8080` | Address and port to bind the server |
+| `DEFAULT_QUOTA` | `0` (unlimited) | Global default quota per user (e.g. `10GB`, `500MB`, `1TB`, `unlimited`) |
+| `OIDC_ISSUER_URL` | | OpenID Connect discovery URL |
+| `OIDC_CLIENT_ID` | | OIDC Client ID |
+| `OIDC_CLIENT_SECRET` | | OIDC Client Secret |
+| `OIDC_REDIRECT_URL` | | Redirect URL configured in OIDC provider (e.g. `.../auth/callback`) |
+| `OIDC_SCOPES` | `openid profile email groups` | Space-separated OIDC scopes |
+| `OIDC_ADMIN_GROUP` | `admin` | Group claim indicating administrator access |
+| `OIDC_USERNAME_CLAIM` | `preferred_username` | Token claim mapped to username |
+| `SESSION_SECRET` | *(auto-generated)* | 32-byte secret key for HMAC cookie signing |
+| `DEV_MODE` | `false` | Mock OIDC authentication bypass for local testing |
 
 ---
 

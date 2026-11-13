@@ -4,6 +4,7 @@ import { ExplorerResult, FileItem } from '../types';
 
 interface Props {
   effectiveUsername: string;
+  onFileDeleted?: () => void;
 }
 
 function formatBytes(bytes: number, decimals = 1) {
@@ -30,7 +31,7 @@ function formatDate(isoDate: string) {
   }
 }
 
-export const FileExplorer: React.FC<Props> = ({ effectiveUsername }) => {
+export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted }) => {
   const [currentPath, setCurrentPath] = useState('');
   const [data, setData] = useState<ExplorerResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,6 +98,7 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername }) => {
       }
       setItemToDelete(null);
       loadFiles(currentPath);
+      onFileDeleted?.();
     } catch (err: any) {
       setError(err.message);
     } finally {

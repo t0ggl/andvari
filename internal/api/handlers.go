@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
@@ -38,6 +39,8 @@ type UserInfoResponse struct {
 	FirstLoginCompleted bool            `json:"first_login_completed"`
 	Tokens              []TokenResponse `json:"tokens"`
 	FlashToken          string          `json:"flash_token,omitempty"`
+	QuotaBytes          *int64          `json:"quota_bytes"`
+	UsedBytes           int64           `json:"used_bytes"`
 }
 
 func (a *API) getEffectiveUser(session *auth.SessionData) (effectiveUser string, isImpersonating bool) {
@@ -79,6 +82,12 @@ func (a *API) HandleMe(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	usedBytes, quotaBytes, _ := a.store.GetEffectiveQuota(effectiveUser)
+	var quotaPtr *int64
+	if quotaBytes > 0 {
+		quotaPtr = &quotaBytes
+	}
+
 	resp := UserInfoResponse{
 		Username:            session.Username,
 		EffectiveUsername:   effectiveUser,
@@ -87,6 +96,8 @@ func (a *API) HandleMe(w http.ResponseWriter, r *http.Request) {
 		FirstLoginCompleted: userMeta.Preferences.FirstLoginCompleted,
 		Tokens:              tokens,
 		FlashToken:          session.FlashToken,
+		QuotaBytes:          quotaPtr,
+		UsedBytes:           usedBytes,
 	}
 
 	// Consume flash token so it's only shown once
@@ -276,6 +287,45 @@ func (a *API) HandleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *API) HandleAdminSetQuota(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	if !a.oidcClient.IsAdmin(session.Groups) {
+		http.Error(w, `{"error":"forbidden: admin access required"}`, http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		TargetUser string `json:"target_user"`
+		QuotaBytes *int64 `json:"quota_bytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TargetUser == "" {
+		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := a.store.SetUserQuota(req.TargetUser, req.QuotaBytes); err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
 func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 	session, err := a.sessionManager.GetSession(r)
 	if err != nil || session == nil || session.Username == "" {
@@ -312,6 +362,8 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(result)
 
 	case http.MethodDelete:
+		targetPath := filepath.Join(userDir, filepath.Clean("/"+reqPath))
+		deletedSize := GetPathSize(targetPath)
 		if err := DeletePath(userDir, reqPath); err != nil {
 			if errors.Is(err, ErrCannotDeleteRoot) || errors.Is(err, ErrAccessDenied) {
 				http.Error(w, `{"error":"cannot delete specified path"}`, http.StatusForbidden)
@@ -323,6 +375,10 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 			}
 			http.Error(w, `{"error":"failed to delete path"}`, http.StatusInternalServerError)
 			return
+		}
+
+		if deletedSize > 0 {
+			a.store.AddUsageDelta(effectiveUser, -deletedSize)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

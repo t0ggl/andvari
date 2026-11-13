@@ -263,3 +263,72 @@ func TestFileExplorerOperations(t *testing.T) {
 		t.Fatalf("expected file to be deleted")
 	}
 }
+
+func TestAPIQuotas(t *testing.T) {
+	api, s, sm, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	s.SetDefaultQuota(2048)
+
+	_, _, _ = s.EnsureUserProvisioned("admin_user")
+	_, _, _ = s.EnsureUserProvisioned("regular_user")
+
+	adminSession := &auth.SessionData{
+		Username: "admin_user",
+		Groups:   []string{"admin"},
+	}
+
+	userSession := &auth.SessionData{
+		Username: "regular_user",
+		Groups:   []string{"users"},
+	}
+
+	// 1. Regular user checks /api/me -> quota_bytes should be 2048
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	addSessionCookie(t, req, sm, userSession)
+	rec := httptest.NewRecorder()
+	api.HandleMe(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var meResp UserInfoResponse
+	_ = json.NewDecoder(rec.Body).Decode(&meResp)
+	if meResp.QuotaBytes == nil || *meResp.QuotaBytes != 2048 {
+		t.Fatalf("expected quota_bytes 2048, got: %v", meResp.QuotaBytes)
+	}
+
+	// 2. Non-admin calls /api/admin/quota -> 403
+	body := bytes.NewBufferString(`{"target_user":"regular_user","quota_bytes":4096}`)
+	req = httptest.NewRequest("POST", "/api/admin/quota", body)
+	addSessionCookie(t, req, sm, userSession)
+	rec = httptest.NewRecorder()
+	api.HandleAdminSetQuota(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", rec.Code)
+	}
+
+	// 3. Admin calls /api/admin/quota -> 200
+	body = bytes.NewBufferString(`{"target_user":"regular_user","quota_bytes":4096}`)
+	req = httptest.NewRequest("POST", "/api/admin/quota", body)
+	addSessionCookie(t, req, sm, adminSession)
+	rec = httptest.NewRecorder()
+	api.HandleAdminSetQuota(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 4. Regular user checks /api/me -> quota_bytes is now 4096
+	req = httptest.NewRequest("GET", "/api/me", nil)
+	addSessionCookie(t, req, sm, userSession)
+	rec = httptest.NewRecorder()
+	api.HandleMe(rec, req)
+
+	var meResp2 UserInfoResponse
+	_ = json.NewDecoder(rec.Body).Decode(&meResp2)
+	if meResp2.QuotaBytes == nil || *meResp2.QuotaBytes != 4096 {
+		t.Fatalf("expected quota_bytes 4096, got: %v", meResp2.QuotaBytes)
+	}
+}

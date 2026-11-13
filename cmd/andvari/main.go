@@ -25,8 +25,13 @@ func main() {
 	log.Printf("Config path: %s", cfg.ConfigPath)
 	log.Printf("Storage path: %s", cfg.StoragePath)
 	log.Printf("Listen address: %s", cfg.ListenAddr)
+	if cfg.DefaultQuotaBytes > 0 {
+		log.Printf("Default user quota: %d bytes", cfg.DefaultQuotaBytes)
+	} else {
+		log.Printf("Default user quota: unlimited")
+	}
 
-	userStore, err := store.NewStore(cfg.ConfigPath, cfg.StoragePath)
+	userStore, err := store.NewStore(cfg.ConfigPath, cfg.StoragePath, cfg.DefaultQuotaBytes)
 	if err != nil {
 		log.Fatalf("Failed to initialize user store: %v", err)
 	}
@@ -72,6 +77,7 @@ func main() {
 	mux.HandleFunc("/api/onboarding/complete", apiServer.HandleCompleteOnboarding)
 	mux.HandleFunc("/api/admin/users", apiServer.HandleAdminListUsers)
 	mux.HandleFunc("/api/admin/impersonate", apiServer.HandleAdminImpersonate)
+	mux.HandleFunc("/api/admin/quota", apiServer.HandleAdminSetQuota)
 	mux.HandleFunc("/api/files", apiServer.HandleFiles)
 	mux.HandleFunc("/api/files/download", apiServer.HandleFileDownload)
 

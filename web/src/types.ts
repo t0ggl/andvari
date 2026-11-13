@@ -13,6 +13,8 @@ export interface UserInfoResponse {
   first_login_completed: boolean;
   tokens: TokenResponse[];
   flash_token?: string;
+  quota_bytes?: number | null;
+  used_bytes: number;
 }
 
 export interface FileItem {

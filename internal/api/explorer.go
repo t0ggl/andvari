@@ -203,3 +203,24 @@ func DeletePath(userDir, requestedPath string) error {
 
 	return os.RemoveAll(targetPath)
 }
+
+// GetPathSize calculates the size of a specific file or directory in bytes.
+func GetPathSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	if !fi.IsDir() {
+		return fi.Size()
+	}
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
+}
