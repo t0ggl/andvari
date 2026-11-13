@@ -9,6 +9,8 @@ interface Props {
   onTokenRevoked: () => void;
 }
 
+const MAX_TOKENS = 20;
+
 export const TokenManager: React.FC<Props> = ({
   tokens,
   effectiveUsername,
@@ -27,7 +29,7 @@ export const TokenManager: React.FC<Props> = ({
   const [revokeLoading, setRevokeLoading] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
-  const canCreate = tokens.length < 2;
+  const canCreate = tokens.length < MAX_TOKENS;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -112,17 +114,17 @@ export const TokenManager: React.FC<Props> = ({
             <h3 className="text-base font-semibold text-white">WebDAV Access Tokens</h3>
             <span
               className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                tokens.length >= 2
+                tokens.length >= MAX_TOKENS
                   ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                   : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
               }`}
             >
-              {tokens.length} / 2 Active
+              {tokens.length} / {MAX_TOKENS} Active
             </span>
           </div>
           <p className="text-xs text-slate-400">
             Generate and manage access tokens for mounting your WebDAV storage on{' '}
-            <span className="text-sky-300 font-mono">{effectiveUsername}</span>. A maximum of 2 tokens are allowed to support zero-downtime rotation.
+            <span className="text-sky-300 font-mono">{effectiveUsername}</span>. A maximum of {MAX_TOKENS} tokens are allowed simultaneously.
           </p>
         </div>
 
@@ -138,7 +140,7 @@ export const TokenManager: React.FC<Props> = ({
               ? 'bg-sky-600 hover:bg-sky-500 text-white cursor-pointer'
               : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
           }`}
-          title={!canCreate ? 'Maximum of 2 tokens reached. Revoke one to create a new token.' : ''}
+          title={!canCreate ? `Maximum of ${MAX_TOKENS} tokens reached. Revoke one to create a new token.` : ''}
         >
           <Plus className="w-4 h-4" />
           <span>Generate Token</span>
@@ -193,7 +195,7 @@ export const TokenManager: React.FC<Props> = ({
           <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
             Active Tokens
           </span>
-          <span className="text-xs text-slate-500">{tokens.length} of 2 slots used</span>
+          <span className="text-xs text-slate-500">{tokens.length} of {MAX_TOKENS} slots used</span>
         </div>
 
         {tokens.length === 0 ? (

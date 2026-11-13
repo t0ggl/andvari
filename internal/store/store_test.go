@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -53,8 +54,16 @@ func TestStoreOperations(t *testing.T) {
 		t.Fatalf("expected second token and info")
 	}
 
-	// 5. Try adding 3rd token -> should fail
-	_, _, err = s.AddToken("alice", "Token 3")
+	// 5. Add tokens up to MaxTokensPerUser (20)
+	for i := 3; i <= MaxTokensPerUser; i++ {
+		_, _, err := s.AddToken("alice", fmt.Sprintf("Token %d", i))
+		if err != nil {
+			t.Fatalf("AddToken failed for token %d: %v", i, err)
+		}
+	}
+
+	// 6. Try adding 21st token -> should fail
+	_, _, err = s.AddToken("alice", fmt.Sprintf("Token %d", MaxTokensPerUser+1))
 	if err != ErrMaxTokensReached {
 		t.Fatalf("expected ErrMaxTokensReached, got: %v", err)
 	}

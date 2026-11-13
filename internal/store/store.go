@@ -18,9 +18,11 @@ import (
 	"github.com/t0ggl/andvari/internal/auth"
 )
 
+const MaxTokensPerUser = 20
+
 var (
 	ErrUserNotFound     = errors.New("user not found")
-	ErrMaxTokensReached = errors.New("maximum of 2 active tokens allowed; revoke an existing token to create a new one")
+	ErrMaxTokensReached = errors.New("maximum of 20 active tokens allowed; revoke an existing token to create a new one")
 	ErrTokenNotFound    = errors.New("token not found")
 	ErrInvalidUsername  = errors.New("invalid username")
 )
@@ -271,7 +273,7 @@ func (s *Store) AddToken(username, label string) (string, *TokenInfo, error) {
 		return "", nil, err
 	}
 
-	if len(user.Tokens) >= 2 {
+	if len(user.Tokens) >= MaxTokensPerUser {
 		return "", nil, ErrMaxTokensReached
 	}
 

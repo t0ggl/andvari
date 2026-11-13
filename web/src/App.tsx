@@ -218,7 +218,7 @@ export const App: React.FC = () => {
               <KeyRound className="w-4 h-4" />
               <span>WebDAV &amp; Tokens</span>
               <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300">
-                {user.tokens.length}/2
+                {user.tokens.length}/20
               </span>
             </button>
           </div>

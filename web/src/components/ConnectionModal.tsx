@@ -250,7 +250,7 @@ pass = <run: rclone obscure YOUR_TOKEN>`;
                   <li>Always use <strong>HTTP Basic Authentication</strong>.</li>
                   <li>Your username is <code className="px-1 py-0.5 bg-slate-800 text-sky-300 rounded">{username}</code>.</li>
                   <li>Your password is the active token generated in your dashboard.</li>
-                  <li>You can have up to 2 active tokens at any time to permit zero-downtime rotation.</li>
+                  <li>You can have up to 20 active tokens at any time to permit multiple clients and zero-downtime rotation.</li>
                 </ul>
               )}
 

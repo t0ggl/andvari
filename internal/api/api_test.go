@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -99,18 +100,31 @@ func TestAPITokenLifecycleAndLimits(t *testing.T) {
 		t.Fatalf("expected raw token in response")
 	}
 
-	// 3. POST /api/tokens for a third token -> must fail with 400
-	reqBody = bytes.NewBufferString(`{"label":"Token 3"}`)
+	// 3. POST /api/tokens up to 20 tokens
+	for i := 3; i <= store.MaxTokensPerUser; i++ {
+		reqBody = bytes.NewBufferString(fmt.Sprintf(`{"label":"Token %d"}`, i))
+		req = httptest.NewRequest("POST", "/api/tokens", reqBody)
+		addSessionCookie(t, req, sm, session)
+		rec = httptest.NewRecorder()
+		api.HandleGenerateToken(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 when generating token %d, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	// 4. POST /api/tokens for a 21st token -> must fail with 400
+	reqBody = bytes.NewBufferString(fmt.Sprintf(`{"label":"Token %d"}`, store.MaxTokensPerUser+1))
 	req = httptest.NewRequest("POST", "/api/tokens", reqBody)
 	addSessionCookie(t, req, sm, session)
 	rec = httptest.NewRecorder()
 	api.HandleGenerateToken(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 when generating 3rd token, got %d", rec.Code)
+		t.Fatalf("expected 400 when generating 21st token, got %d", rec.Code)
 	}
 
-	// 4. Revoke token
+	// 5. Revoke token 2
 	tokInfo := genResp["token_info"].(map[string]interface{})
 	token2ID := tokInfo["id"].(string)
 
@@ -123,10 +137,10 @@ func TestAPITokenLifecycleAndLimits(t *testing.T) {
 		t.Fatalf("expected 200 on revoke, got %d", rec.Code)
 	}
 
-	// 5. User should now only have 1 active token again
+	// 6. User should now have 19 active tokens
 	user, err := s.GetUser("charlie")
-	if err != nil || len(user.Tokens) != 1 {
-		t.Fatalf("expected 1 token remaining, got %d", len(user.Tokens))
+	if err != nil || len(user.Tokens) != store.MaxTokensPerUser-1 {
+		t.Fatalf("expected %d tokens remaining, got %d", store.MaxTokensPerUser-1, len(user.Tokens))
 	}
 }
 

@@ -25,7 +25,7 @@ Andvari is defined by three core pillars: **lightweight performance**, **native 
 - **True multi-tenancy**: Strict storage sandboxing per tenant (`/data/{username}`); cross-tenant data traversal is structurally prevented. Includes admin impersonation for tenant support.
 - **Simple OIDC integration**: Effortless integration with modern OIDC identity providers via reverse proxy authentication headers, eliminating internal user registries and credential storage.
 - **Dual authentication model**: SSO/OIDC session for the web UI; per-user HTTP Basic Auth tokens for WebDAV client connections.
-- **Zero-downtime token rotation**: Maximum 2 concurrent active tokens per tenant for rotation without client disconnects.
+- **Zero-downtime token rotation**: Maximum 20 concurrent active tokens per tenant for multi-client support and rotation without client disconnects.
 
 ## Brand Commitments
 - **Name**: Andvari (Norse mythical dwarf guardian of subterranean treasure).

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 
@@ -134,7 +135,7 @@ func (a *API) HandleGenerateToken(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrMaxTokensReached) {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error": "Maximum of 2 active tokens allowed. Please revoke one before generating a new token.",
+				"error": fmt.Sprintf("Maximum of %d active tokens allowed. Please revoke one before generating a new token.", store.MaxTokensPerUser),
 			})
 			return
 		}
