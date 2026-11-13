@@ -2,11 +2,23 @@
 
 These instructions apply to all agents and contributors working on this repository.
 
-## 1. Branch & Pull Request Workflow (Mandatory)
+## 1. End-to-End Task & Pull Request Workflow (Mandatory)
+
+Do not stop after making local code changes or wait for manual prompting at each lifecycle stage. Complete tasks through the full end-to-end pipeline:
 
 - **Always use feature branches:** Never commit or push changes directly to `main`. Create and switch to a descriptive feature branch (e.g., `feat/<feature-name>`, `fix/<issue-name>`).
-- **Create a Pull Request:** All changes must be proposed via a Pull Request (PR) targeting `main`.
-- **Merge Criteria:** Only merge a PR once all automated tests and CI checks pass on the PR via GitHub Actions (`.github/workflows/build.yml`). Never merge with failing or pending CI checks.
+- **Build & Test:** Verify changes thoroughly locally before pushing:
+  - Run backend tests: `go test -v -cover ./...`
+  - Rebuild web assets: `npm --prefix web run build` (ensure `web/dist/index.html` is updated if frontend files changed).
+- **Create a Pull Request:** Push the feature branch to `origin` and open a Pull Request targeting `main` (`gh pr create`).
+- **Merge Criteria & Autonomous Merge:** Monitor and wait for all automated tests and CI checks on GitHub Actions (`.github/workflows/build.yml`) to pass. Once checks pass, squash merge the PR into `main` (`gh pr merge --squash --delete-branch`). Never merge with failing or pending CI checks.
+- **Version Bump & Release Tagging:** After merging to `main`, checkout `main`, pull latest, and bump the version by creating and pushing a new semver git tag (e.g., patch `vX.Y.Z+1` for fixes or minor `vX.Y+1.0` for new features):
+  ```bash
+  git checkout main
+  git pull origin main
+  git tag -a vX.Y.Z -m "Release vX.Y.Z"
+  git push origin vX.Y.Z
+  ```
 
 ## 2. Environment & Tooling
 
