@@ -37,13 +37,8 @@ export const Navbar: React.FC<Props> = ({
         <div className="flex items-center gap-3">
           <img src="/icon.svg" alt="Andvari" className="w-8 h-8 rounded-lg shadow-sm" />
           <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-bold text-white tracking-tight">Andvari</span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium">
-                WebDAV
-              </span>
-            </div>
-            <span className="text-[10px] text-slate-400">Multi-Tenant Storage</span>
+            <span className="text-base font-bold text-white tracking-tight">Andvari</span>
+            <span className="text-[10px] text-slate-400">Personal Cloud Storage</span>
           </div>
         </div>
 
