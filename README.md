@@ -2,14 +2,12 @@
 
 <div align="center">
   <img src="assets/icon.svg" alt="Andvari Logo" width="96" height="96" />
-  <h3>Cloud-Native Multi-Tenant WebDAV Server with Dark-Mode Web Portal</h3>
+  <h3>Zero-database multi-tenant WebDAV server with OIDC for shared storage</h3>
 </div>
 
 ---
 
-**Andvari** is a lightweight, zero-database, multi-tenant WebDAV server with a modern dark-mode web portal for access token rotation, onboarding guides, file browsing, and administrative user impersonation.
-
-Designed specifically to run horizontally across multiple pods in Kubernetes or container clusters on shared storage (NFS, CephFS, multi-attach volumes) without needing PostgreSQL, MySQL, Redis, or Raft clusters.
+**Andvari** is a lightweight, zero-database multi-tenant WebDAV server with a web portal for token management, client onboarding, and file browsing.
 
 ## Key Features
 
@@ -17,8 +15,8 @@ Designed specifically to run horizontally across multiple pods in Kubernetes or 
 - **Two-Layer Fast Token Authentication**:
   - Passwords/tokens are stored at rest using secure **Argon2id** hashes.
   - WebDAV requests verify against a sub-microsecond in-memory HMAC cache salted with an ephemeral startup key, completely bypassing Argon2id on high-frequency requests.
-  - Cross-pod cache invalidation via file `mtime` inspection ensures instant revocation.
-- **Strict Multi-Tenancy**: Dynamic filesystem chroot jails each authenticated WebDAV connection to `/data/users/{username}/`.
+  - Cache invalidation via file `mtime` inspection ensures instant revocation on token updates.
+- **Strict Tenant Isolation**: Scopes each authenticated WebDAV connection directly to `/data/users/{username}/`, preventing access to other tenants or parent directories.
 - **Token Rotation**: Supports up to 20 active tokens per user at any time for multi-device access and zero-downtime rotation.
 - **First-Login Splash & Onboarding**: Automatically provisions user directories and displays an interactive connection guide with copyable credentials and instructions for macOS Finder, Windows Explorer, GNOME Files, and rclone.
 - **Web File Explorer**: Built-in dark mode file manager supporting folder browsing, file downloading, and file/folder deletion.
