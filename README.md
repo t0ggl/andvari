@@ -2,7 +2,7 @@
 
 <div align="center">
   <img src="assets/icon.svg" alt="Andvari Logo" width="96" height="96" />
-  <h3>Zero-database multi-tenant WebDAV server with OIDC for shared storage</h3>
+  <h3>Zero-database multi-tenant WebDAV server</h3>
 </div>
 
 ---
