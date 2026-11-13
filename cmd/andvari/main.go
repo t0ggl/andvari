@@ -15,6 +15,7 @@ import (
 	"github.com/t0ggl/andvari/internal/config"
 	"github.com/t0ggl/andvari/internal/store"
 	"github.com/t0ggl/andvari/internal/webdav"
+	"github.com/t0ggl/andvari/internal/worker"
 	"github.com/t0ggl/andvari/web"
 )
 
@@ -54,8 +55,11 @@ func main() {
 		log.Fatalf("Failed to initialize OIDC client: %v", err)
 	}
 
-	webdavServer := webdav.NewServer(userStore)
-	apiServer := api.NewAPI(userStore, sessionManager, oidcClient)
+	workerManager := worker.NewManager(cfg.WorkerDir, 5*time.Minute)
+	defer workerManager.Close()
+
+	webdavServer := webdav.NewServer(userStore, workerManager)
+	apiServer := api.NewAPI(userStore, sessionManager, oidcClient, workerManager)
 
 	mux := http.NewServeMux()
 

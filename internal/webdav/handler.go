@@ -10,12 +10,14 @@ import (
 	"strings"
 
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/worker"
 	"golang.org/x/net/webdav"
 )
 
 type Server struct {
-	store      *store.Store
-	lockSystem webdav.LockSystem
+	store         *store.Store
+	lockSystem    webdav.LockSystem
+	workerManager *worker.Manager
 }
 
 type quotaLimitReader struct {
@@ -44,11 +46,15 @@ func (q *quotaLimitReader) Close() error {
 	return q.rc.Close()
 }
 
-func NewServer(s *store.Store) *Server {
-	return &Server{
+func NewServer(s *store.Store, wm ...*worker.Manager) *Server {
+	srv := &Server{
 		store:      s,
 		lockSystem: webdav.NewMemLS(),
 	}
+	if len(wm) > 0 {
+		srv.workerManager = wm[0]
+	}
+	return srv
 }
 
 func getFileSize(path string) int64 {
@@ -100,9 +106,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quotaLimit, err := s.store.GetUserQuotaLimit(username)
+	usedBytes, quotaLimit, err := s.store.GetEffectiveQuota(username)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if s.workerManager != nil {
+		delta, err := s.workerManager.ServeWebDAV(username, userDir, w, r, quotaLimit, usedBytes)
+		if err != nil {
+			log.Printf("[webdav] worker error for %s: %v", username, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if delta != 0 {
+			s.store.AddUsageDelta(username, delta)
+		}
 		return
 	}
 

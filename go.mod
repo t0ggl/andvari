@@ -13,5 +13,7 @@ require (
 
 require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/landlock-lsm/go-landlock v0.11.2 // indirect
 	golang.org/x/sys v0.50.0 // indirect
+	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
 )

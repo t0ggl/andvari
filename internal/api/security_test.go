@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
 	"github.com/t0ggl/andvari/internal/webdav"
+	"github.com/t0ggl/andvari/internal/worker"
 )
 
 // TestPathTraversalSecurity verifies that all forms of directory traversal attacks
@@ -385,5 +387,129 @@ func TestWebDAVSecurity(t *testing.T) {
 	// golang.org/x/net/webdav confines Dir(userDir) so traversal yields 404 or 400, never 200 with Bob's content
 	if strings.Contains(rec.Body.String(), "BOB_SECRET") {
 		t.Fatalf("CRITICAL SECURITY LEAK: Alice accessed Bob's file via WebDAV path traversal!")
+	}
+}
+
+// TestWorkerImpersonationIsolation verifies that file explorer operations with admin
+// impersonation route to the impersonated user's Landlocked worker process.
+func TestWorkerImpersonationIsolation(t *testing.T) {
+	api, s, sm, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	wm := worker.NewManager(filepath.Join(tmpDir, "workers"), 1*time.Minute)
+	defer wm.Close()
+
+	apiWithWorker := NewAPI(s, sm, api.oidcClient, wm)
+
+	_, _, err := s.EnsureUserProvisioned("adminuser")
+	if err != nil {
+		t.Fatalf("failed to provision adminuser: %v", err)
+	}
+	_, _, err = s.EnsureUserProvisioned("bob")
+	if err != nil {
+		t.Fatalf("failed to provision bob: %v", err)
+	}
+	_, _, err = s.EnsureUserProvisioned("alice")
+	if err != nil {
+		t.Fatalf("failed to provision alice: %v", err)
+	}
+
+	bobDir, _ := s.UserStoragePath("bob")
+	aliceDir, _ := s.UserStoragePath("alice")
+	_ = os.WriteFile(filepath.Join(bobDir, "bob_file.txt"), []byte("bob file contents"), 0644)
+	_ = os.WriteFile(filepath.Join(aliceDir, "alice_file.txt"), []byte("alice file contents"), 0644)
+
+	// Admin impersonating Bob
+	session := &auth.SessionData{
+		Username:         "adminuser",
+		Groups:           []string{"admin"},
+		ImpersonatedUser: "bob",
+	}
+
+	// 1. List files while impersonating Bob -> should return Bob's files
+	listReq := httptest.NewRequest("GET", "/api/files", nil)
+	addSessionCookie(t, listReq, sm, session)
+	listRec := httptest.NewRecorder()
+	apiWithWorker.HandleFiles(listRec, listReq)
+
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for impersonated list, got %d (body: %s)", listRec.Code, listRec.Body.String())
+	}
+	if !strings.Contains(listRec.Body.String(), "bob_file.txt") {
+		t.Errorf("expected bob_file.txt in list response, got %s", listRec.Body.String())
+	}
+	if strings.Contains(listRec.Body.String(), "alice_file.txt") {
+		t.Errorf("SECURITY LEAK: impersonated list leaked alice_file.txt: %s", listRec.Body.String())
+	}
+
+	// 2. Download file while impersonating Bob -> should download Bob's file
+	downReq := httptest.NewRequest("GET", "/api/files/download?path=bob_file.txt", nil)
+	addSessionCookie(t, downReq, sm, session)
+	downRec := httptest.NewRecorder()
+	apiWithWorker.HandleFileDownload(downRec, downReq)
+
+	if downRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for download, got %d", downRec.Code)
+	}
+	if downRec.Body.String() != "bob file contents" {
+		t.Errorf("expected 'bob file contents', got %q", downRec.Body.String())
+	}
+
+	// 3. Clear impersonation: adminuser now sees own empty folder
+	session.ImpersonatedUser = ""
+	adminListReq := httptest.NewRequest("GET", "/api/files", nil)
+	addSessionCookie(t, adminListReq, sm, session)
+	adminListRec := httptest.NewRecorder()
+	apiWithWorker.HandleFiles(adminListRec, adminListReq)
+
+	if adminListRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin own list, got %d", adminListRec.Code)
+	}
+	if strings.Contains(adminListRec.Body.String(), "bob_file.txt") || strings.Contains(adminListRec.Body.String(), "alice_file.txt") {
+		t.Errorf("SECURITY LEAK: admin list leaked other users files: %s", adminListRec.Body.String())
+	}
+}
+
+// TestWebDAVWithWorkerServer verifies WebDAV requests through the worker manager.
+func TestWebDAVWithWorkerServer(t *testing.T) {
+	_, s, _, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	wm := worker.NewManager(filepath.Join(tmpDir, "workers"), 1*time.Minute)
+	defer wm.Close()
+
+	server := webdav.NewServer(s, wm)
+
+	_, tokenAlice, _ := s.EnsureUserProvisioned("alice")
+	aliceDir, _ := s.UserStoragePath("alice")
+
+	// 1. Upload via WebDAV worker
+	putReq := httptest.NewRequest("PUT", "/webdav/report.txt", strings.NewReader("Quarterly Report"))
+	putReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:"+tokenAlice)))
+	putReq.Header.Set("Content-Length", "16")
+	putRec := httptest.NewRecorder()
+	server.ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusCreated && putRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 201/204 for WebDAV PUT with worker, got %d", putRec.Code)
+	}
+
+	// Verify file on disk
+	content, err := os.ReadFile(filepath.Join(aliceDir, "report.txt"))
+	if err != nil || string(content) != "Quarterly Report" {
+		t.Fatalf("file content on disk mismatch: %q (err: %v)", string(content), err)
+	}
+
+	// 2. Read via WebDAV worker
+	getReq := httptest.NewRequest("GET", "/webdav/report.txt", nil)
+	getReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:"+tokenAlice)))
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for WebDAV GET with worker, got %d", getRec.Code)
+	}
+	if getRec.Body.String() != "Quarterly Report" {
+		t.Errorf("expected 'Quarterly Report', got %q", getRec.Body.String())
 	}
 }

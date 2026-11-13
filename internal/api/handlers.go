@@ -4,25 +4,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"path/filepath"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/worker"
 )
 
 type API struct {
 	store          *store.Store
 	sessionManager *auth.SessionManager
 	oidcClient     *auth.OIDCClient
+	workerManager  *worker.Manager
 }
 
-func NewAPI(s *store.Store, sm *auth.SessionManager, oidc *auth.OIDCClient) *API {
-	return &API{
+func NewAPI(s *store.Store, sm *auth.SessionManager, oidc *auth.OIDCClient, wm ...*worker.Manager) *API {
+	a := &API{
 		store:          s,
 		sessionManager: sm,
 		oidcClient:     oidc,
 	}
+	if len(wm) > 0 {
+		a.workerManager = wm[0]
+	}
+	return a
 }
 
 type TokenResponse struct {
@@ -341,6 +348,31 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if a.workerManager != nil {
+		switch r.Method {
+		case http.MethodGet:
+			if err := a.workerManager.ServeFilesList(effectiveUser, userDir, w, r); err != nil {
+				log.Printf("[api] worker ServeFilesList error for %s: %v", effectiveUser, err)
+				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			}
+			return
+		case http.MethodDelete:
+			delta, err := a.workerManager.ServeFilesDelete(effectiveUser, userDir, w, r)
+			if err != nil {
+				log.Printf("[api] worker ServeFilesDelete error for %s: %v", effectiveUser, err)
+				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+				return
+			}
+			if delta != 0 {
+				a.store.AddUsageDelta(effectiveUser, delta)
+			}
+			return
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
 	reqPath := r.URL.Query().Get("path")
 
 	switch r.Method {
@@ -401,6 +433,14 @@ func (a *API) HandleFileDownload(w http.ResponseWriter, r *http.Request) {
 	userDir, err := a.store.UserStoragePath(effectiveUser)
 	if err != nil {
 		http.Error(w, "invalid user", http.StatusBadRequest)
+		return
+	}
+
+	if a.workerManager != nil {
+		if err := a.workerManager.ServeFileDownload(effectiveUser, userDir, w, r); err != nil {
+			log.Printf("[api] worker ServeFileDownload error for %s: %v", effectiveUser, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 

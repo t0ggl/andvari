@@ -22,6 +22,7 @@ type Config struct {
 	SessionSecret     []byte
 	DevMode           bool
 	DefaultQuotaBytes int64
+	WorkerDir         string
 }
 
 func getEnv(key, defaultVal string) string {
@@ -110,6 +111,7 @@ func Load() *Config {
 		SessionSecret:     sessionSecret,
 		DevMode:           devMode,
 		DefaultQuotaBytes: defaultQuotaBytes,
+		WorkerDir:         getEnv("WORKER_DIR", "/tmp/andvari-workers"),
 	}
 }
 
