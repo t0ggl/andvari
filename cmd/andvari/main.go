@@ -86,6 +86,7 @@ func main() {
 	mux.HandleFunc("/api/admin/quota", apiServer.HandleAdminSetQuota)
 	mux.HandleFunc("/api/files", apiServer.HandleFiles)
 	mux.HandleFunc("/api/files/download", apiServer.HandleFileDownload)
+	mux.HandleFunc("/api/files/upload", apiServer.HandleFileUpload)
 
 	// Auth routes
 	mux.HandleFunc("/auth/login", apiServer.HandleLogin)

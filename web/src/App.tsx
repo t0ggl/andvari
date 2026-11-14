@@ -280,7 +280,11 @@ export const App: React.FC = () => {
 
         {/* Tab content */}
         {activeTab === 'files' ? (
-          <FileExplorer effectiveUsername={user.effective_username} onFileDeleted={fetchUser} />
+          <FileExplorer
+            effectiveUsername={user.effective_username}
+            onFileDeleted={fetchUser}
+            onFileUploaded={fetchUser}
+          />
         ) : (
           <TokenManager
             tokens={user.tokens}

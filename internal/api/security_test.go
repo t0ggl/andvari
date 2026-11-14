@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,6 +97,48 @@ func TestPathTraversalSecurity(t *testing.T) {
 			// Ensure secret file is still intact
 			if _, err := os.Stat(secretPath); err != nil {
 				t.Fatalf("CRITICAL SECURITY FLAW: secret file was deleted by payload %q!", payload)
+			}
+		})
+
+		t.Run("Upload Traversal: "+payload, func(t *testing.T) {
+			uploadBody := &bytes.Buffer{}
+			writer := multipart.NewWriter(uploadBody)
+			part, err := writer.CreateFormFile("files", payload)
+			if err == nil {
+				_, _ = part.Write([]byte("malicious content"))
+				_ = writer.Close()
+
+				req := httptest.NewRequest("POST", "/api/files/upload?path=", uploadBody)
+				req.Header.Set("Content-Type", writer.FormDataContentType())
+				addSessionCookie(t, req, sm, session)
+				rec := httptest.NewRecorder()
+				api.HandleFileUpload(rec, req)
+
+				if rec.Code != http.StatusForbidden && rec.Code != http.StatusBadRequest {
+					t.Fatalf("expected 403 or 400 for upload traversal payload %q, got HTTP %d", payload, rec.Code)
+				}
+			}
+
+			uploadBody2 := &bytes.Buffer{}
+			writer2 := multipart.NewWriter(uploadBody2)
+			part2, _ := writer2.CreateFormFile("files", "innocent.txt")
+			_, _ = part2.Write([]byte("innocent content"))
+			_ = writer2.Close()
+
+			req2 := httptest.NewRequest("POST", "/api/files/upload?path="+payload, uploadBody2)
+			req2.Header.Set("Content-Type", writer2.FormDataContentType())
+			addSessionCookie(t, req2, sm, session)
+			rec2 := httptest.NewRecorder()
+			api.HandleFileUpload(rec2, req2)
+
+			if rec2.Code != http.StatusForbidden && rec2.Code != http.StatusBadRequest {
+				t.Fatalf("expected 403 or 400 for upload path param traversal %q, got HTTP %d", payload, rec2.Code)
+			}
+
+			// Ensure secret file was not overwritten
+			content, err := os.ReadFile(secretPath)
+			if err != nil || string(content) != "SUPER_SECRET_KEY" {
+				t.Fatalf("CRITICAL SECURITY FLAW: secret file was corrupted/overwritten by payload %q!", payload)
 			}
 		})
 	}

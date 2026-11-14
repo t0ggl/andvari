@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,6 +162,42 @@ func TestWorkerFileExplorerOps(t *testing.T) {
 	// Verify file is gone
 	if _, err := os.Stat(docPath); !os.IsNotExist(err) {
 		t.Errorf("expected doc1.txt to be deleted")
+	}
+
+	// 4. Upload file with recursive subdirectories
+	uploadBody := &bytes.Buffer{}
+	writer := multipart.NewWriter(uploadBody)
+	part, err := writer.CreateFormFile("files", "nested/sub/hello.txt")
+	if err != nil {
+		t.Fatalf("CreateFormFile failed: %v", err)
+	}
+	_, _ = part.Write([]byte("greetings from landlock worker!"))
+	_ = writer.Close()
+
+	upReq := httptest.NewRequest("POST", "/api/files/upload?path=docs", uploadBody)
+	upReq.Header.Set("Content-Type", writer.FormDataContentType())
+	upRec := httptest.NewRecorder()
+
+	upDelta, err := mgr.ServeFilesUpload("bob", userDir, upRec, upReq, 10000, 0)
+	if err != nil {
+		t.Fatalf("ServeFilesUpload failed: %v", err)
+	}
+	if upRec.Code != http.StatusOK {
+		t.Fatalf("ServeFilesUpload status: %d (body: %s)", upRec.Code, upRec.Body.String())
+	}
+	expectedLen := int64(len("greetings from landlock worker!"))
+	if upDelta != expectedLen {
+		t.Errorf("expected upDelta=%d, got %d", expectedLen, upDelta)
+	}
+
+	// Verify file created in userDir
+	uploadedFilePath := filepath.Join(userDir, "docs", "nested", "sub", "hello.txt")
+	content, err := os.ReadFile(uploadedFilePath)
+	if err != nil {
+		t.Fatalf("failed to read uploaded file: %v", err)
+	}
+	if string(content) != "greetings from landlock worker!" {
+		t.Errorf("uploaded content mismatch: %q", string(content))
 	}
 }
 

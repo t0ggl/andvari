@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,8 @@ var (
 	ErrAccessDenied     = errors.New("access denied: path escapes user directory")
 	ErrPathNotFound     = errors.New("path not found")
 	ErrCannotDeleteRoot = errors.New("cannot delete root directory")
+	ErrQuotaExceeded    = errors.New("quota exceeded: insufficient storage")
+	ErrInvalidPath      = errors.New("invalid path")
 )
 
 type FileItem struct {
@@ -31,6 +34,18 @@ type ExplorerResult struct {
 	CurrentPath string     `json:"current_path"`
 	Breadcrumbs []string   `json:"breadcrumbs"`
 	Items       []FileItem `json:"items"`
+}
+
+type UploadedFile struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type UploadResult struct {
+	Success  bool           `json:"success"`
+	Uploaded []UploadedFile `json:"uploaded"`
+	Delta    int64          `json:"delta"`
 }
 
 // ResolveSafePath ensures requested path is safely confined to userDir.
@@ -224,3 +239,265 @@ func GetPathSize(path string) int64 {
 	})
 	return total
 }
+
+func getPathFileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err == nil && !fi.IsDir() {
+		return fi.Size()
+	}
+	return 0
+}
+
+type quotaLimitReader struct {
+	rc        io.Reader
+	remaining int64
+	exceeded  bool
+}
+
+func (q *quotaLimitReader) Read(p []byte) (int, error) {
+	if q.exceeded {
+		return 0, ErrQuotaExceeded
+	}
+	if q.remaining <= 0 {
+		q.exceeded = true
+		return 0, ErrQuotaExceeded
+	}
+	if int64(len(p)) > q.remaining {
+		p = p[:q.remaining]
+	}
+	n, err := q.rc.Read(p)
+	q.remaining -= int64(n)
+	return n, err
+}
+
+func saveSingleStream(userDir, relTarget string, stream io.Reader, quotaLimit, usedBytes int64) (*UploadedFile, int64, error) {
+	if unescaped, err := url.PathUnescape(relTarget); err == nil {
+		relTarget = unescaped
+	}
+	if unescaped, err := url.QueryUnescape(relTarget); err == nil {
+		relTarget = unescaped
+	}
+
+	if strings.Contains(relTarget, "\x00") {
+		return nil, 0, ErrAccessDenied
+	}
+	normalized := strings.ReplaceAll(relTarget, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || filepath.IsAbs(relTarget) {
+		return nil, 0, ErrAccessDenied
+	}
+	cleanRel := filepath.Clean(normalized)
+	if cleanRel == "." || cleanRel == "" {
+		return nil, 0, ErrInvalidPath
+	}
+
+	targetPath, err := ResolveSafePath(userDir, cleanRel)
+	if err != nil {
+		return nil, 0, err
+	}
+	if targetPath == userDir {
+		return nil, 0, ErrInvalidPath
+	}
+
+	// Verify target is not an existing directory
+	if stat, err := os.Stat(targetPath); err == nil && stat.IsDir() {
+		return nil, 0, fmt.Errorf("destination %q is an existing directory", cleanRel)
+	}
+
+	parentDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return nil, 0, err
+	}
+
+	var existingSize int64
+	if stat, err := os.Stat(targetPath); err == nil && !stat.IsDir() {
+		existingSize = stat.Size()
+	}
+
+	var reader io.Reader = stream
+	if quotaLimit > 0 {
+		available := quotaLimit - usedBytes + existingSize
+		if available < 0 {
+			available = 0
+		}
+		reader = &quotaLimitReader{
+			rc:        stream,
+			remaining: available,
+		}
+	}
+
+	tmpFile := filepath.Join(parentDir, fmt.Sprintf(".upload-%d.tmp", time.Now().UnixNano()))
+	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	written, copyErr := io.Copy(f, reader)
+	closeErr := f.Close()
+
+	if copyErr != nil {
+		_ = os.Remove(tmpFile)
+		if errors.Is(copyErr, ErrQuotaExceeded) || strings.Contains(copyErr.Error(), "quota exceeded") {
+			return nil, 0, ErrQuotaExceeded
+		}
+		return nil, 0, copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpFile)
+		return nil, 0, closeErr
+	}
+
+	if err := os.Rename(tmpFile, targetPath); err != nil {
+		_ = os.Remove(tmpFile)
+		return nil, 0, err
+	}
+
+	delta := written - existingSize
+	item := &UploadedFile{
+		Name: filepath.Base(targetPath),
+		Path: cleanRel,
+		Size: written,
+	}
+	return item, delta, nil
+}
+
+// SaveUpload handles saving one or more uploaded files from a request into userDir.
+// It supports multipart/form-data with subpaths, raw stream uploads, and directory creation (is_dir=true).
+func SaveUpload(userDir, basePath string, r *http.Request, quotaLimit, usedBytes int64) (*UploadResult, error) {
+	if unescaped, err := url.PathUnescape(basePath); err == nil {
+		basePath = unescaped
+	}
+	if unescaped, err := url.QueryUnescape(basePath); err == nil {
+		basePath = unescaped
+	}
+	if strings.Contains(basePath, "\x00") {
+		return nil, ErrAccessDenied
+	}
+	normBase := strings.ReplaceAll(basePath, "\\", "/")
+	if strings.HasPrefix(normBase, "/") || filepath.IsAbs(basePath) {
+		return nil, ErrAccessDenied
+	}
+
+	// 1. Check if directory creation requested (e.g. is_dir=true or empty folder drop)
+	if r.URL.Query().Get("is_dir") == "true" {
+		cleanBase := filepath.Clean(normBase)
+		if cleanBase == "" || cleanBase == "/" || cleanBase == "." {
+			return nil, ErrInvalidPath
+		}
+		targetPath, err := ResolveSafePath(userDir, cleanBase)
+		if err != nil {
+			return nil, err
+		}
+		if targetPath == userDir {
+			return nil, ErrInvalidPath
+		}
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			return nil, err
+		}
+		return &UploadResult{
+			Success: true,
+			Uploaded: []UploadedFile{
+				{
+					Name: filepath.Base(targetPath),
+					Path: cleanBase,
+					Size: 0,
+				},
+			},
+			Delta: 0,
+		}, nil
+	}
+
+	var uploaded []UploadedFile
+	var totalDelta int64
+	currentUsed := usedBytes
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		mr, err := r.MultipartReader()
+		if err != nil {
+			return nil, err
+		}
+
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+
+			fileName := part.FileName()
+			if fileName == "" {
+				// Form field without file name - skip
+				part.Close()
+				continue
+			}
+
+			// In Go's mime/multipart, part.FileName() strips directory components with filepath.Base().
+			// To support recursive folder uploads, we extract the raw filename from Content-Disposition
+			// or X-Relative-Path.
+			itemRel := fileName
+			if cd := part.Header.Get("Content-Disposition"); cd != "" {
+				if _, params, err := mime.ParseMediaType(cd); err == nil {
+					if fn, ok := params["filename"]; ok && fn != "" {
+						itemRel = fn
+					}
+				}
+			}
+			if relHeader := part.Header.Get("X-Relative-Path"); relHeader != "" {
+				itemRel = relHeader
+			}
+
+			if unescaped, err := url.PathUnescape(itemRel); err == nil {
+				itemRel = unescaped
+			}
+			if unescaped, err := url.QueryUnescape(itemRel); err == nil {
+				itemRel = unescaped
+			}
+			if strings.Contains(itemRel, "\x00") {
+				part.Close()
+				return nil, ErrAccessDenied
+			}
+			normItem := strings.ReplaceAll(itemRel, "\\", "/")
+			if strings.HasPrefix(normItem, "/") || filepath.IsAbs(itemRel) {
+				part.Close()
+				return nil, ErrAccessDenied
+			}
+
+			combinedRel := filepath.Join(normBase, normItem)
+			item, delta, err := saveSingleStream(userDir, combinedRel, part, quotaLimit, currentUsed)
+			part.Close()
+			if err != nil {
+				return nil, err
+			}
+
+			uploaded = append(uploaded, *item)
+			currentUsed += delta
+			totalDelta += delta
+		}
+	} else {
+		// Raw body upload
+		fileName := r.URL.Query().Get("filename")
+		targetRel := basePath
+		if fileName != "" {
+			targetRel = filepath.Join(basePath, fileName)
+		}
+		if targetRel == "" || targetRel == "." {
+			return nil, ErrInvalidPath
+		}
+
+		item, delta, err := saveSingleStream(userDir, targetRel, r.Body, quotaLimit, currentUsed)
+		if err != nil {
+			return nil, err
+		}
+		uploaded = append(uploaded, *item)
+		totalDelta = delta
+	}
+
+	return &UploadResult{
+		Success:  true,
+		Uploaded: uploaded,
+		Delta:    totalDelta,
+	}, nil
+}
+

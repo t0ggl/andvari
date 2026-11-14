@@ -307,6 +307,42 @@ func RunWorkerCLI(args []string) {
 		}
 	})
 
+	// Web UI File Upload
+	mux.HandleFunc("/_worker/files/upload", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastActive = time.Now()
+		mu.Unlock()
+
+		if r.Method != http.MethodPost && r.Method != http.MethodPut {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		quotaLimit, _ := strconv.ParseInt(r.Header.Get("X-Andvari-Quota-Limit"), 10, 64)
+		usedBytes, _ := strconv.ParseInt(r.Header.Get("X-Andvari-Quota-Used"), 10, 64)
+		basePath := r.URL.Query().Get("path")
+
+		res, err := explorer.SaveUpload(*userDir, basePath, r, quotaLimit, usedBytes)
+		if err != nil {
+			if errors.Is(err, explorer.ErrAccessDenied) || errors.Is(err, explorer.ErrInvalidPath) {
+				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+				return
+			}
+			if errors.Is(err, explorer.ErrQuotaExceeded) {
+				http.Error(w, `{"error":"quota exceeded: insufficient storage"}`, http.StatusInsufficientStorage)
+				return
+			}
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+
+		if res.Delta != 0 {
+			w.Header().Set("X-Andvari-Usage-Delta", strconv.FormatInt(res.Delta, 10))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(res)
+	})
+
 	// Negative Security Test Endpoint: Attempts direct filesystem read from inside the worker
 	mux.HandleFunc("/_worker/security/test-read", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()

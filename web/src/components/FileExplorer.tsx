@@ -1,10 +1,41 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Folder, File, Download, Trash2, ChevronRight, Home, RefreshCw, AlertTriangle, X } from 'lucide-react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import {
+  Folder,
+  File,
+  Download,
+  Trash2,
+  ChevronRight,
+  Home,
+  RefreshCw,
+  AlertTriangle,
+  X,
+  Upload,
+  FolderUp,
+  FileUp,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import { ExplorerResult, FileItem } from '../types';
 
 interface Props {
   effectiveUsername: string;
   onFileDeleted?: () => void;
+  onFileUploaded?: () => void;
+}
+
+export interface UploadTask {
+  id: string;
+  name: string;
+  relativePath: string;
+  size: number;
+  isDir?: boolean;
+  file?: File;
+  status: 'pending' | 'uploading' | 'success' | 'error';
+  progress: number;
+  error?: string;
 }
 
 function formatBytes(bytes: number, decimals = 1) {
@@ -31,7 +62,7 @@ function formatDate(isoDate: string) {
   }
 }
 
-export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted }) => {
+export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted, onFileUploaded }) => {
   const [currentPath, setCurrentPath] = useState('');
   const [data, setData] = useState<ExplorerResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -46,9 +77,20 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
   const [itemsToDelete, setItemsToDelete] = useState<FileItem[] | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
+  // Upload state
+  const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
+  const [isUploadWidgetOpen, setIsUploadWidgetOpen] = useState(false);
+  const [isUploadWidgetMinimized, setIsUploadWidgetMinimized] = useState(false);
+  const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-  const loadFiles = async (path: string) => {
+  const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null);
+  const dragCounter = useRef(0);
+
+  const loadFiles = useCallback(async (path: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -65,11 +107,22 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadFiles(currentPath);
-  }, [effectiveUsername]);
+  }, [effectiveUsername, loadFiles]);
+
+  // Close upload dropdown when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (uploadMenuRef.current && !uploadMenuRef.current.contains(e.target as Node)) {
+        setIsUploadMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   // Prune any selected paths that are no longer in data.items
   useEffect(() => {
@@ -108,6 +161,8 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
       if (e.key === 'Escape') {
         if (itemsToDelete) {
           setItemsToDelete(null);
+        } else if (isUploadMenuOpen) {
+          setIsUploadMenuOpen(false);
         } else if (selectedPaths.size > 0) {
           setSelectedPaths(new Set());
           setAnchorIndex(null);
@@ -127,7 +182,7 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [itemsToDelete, selectedPaths, data]);
+  }, [itemsToDelete, selectedPaths, data, isUploadMenuOpen]);
 
   const handleNavigate = (path: string) => {
     setSelectedPaths(new Set());
@@ -154,14 +209,12 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     if (!data?.items) return;
 
     if (shiftKey) {
-      // Prevent browser text selection on shift-click
       window.getSelection()?.removeAllRanges();
 
       const anchor = anchorIndex !== null ? anchorIndex : 0;
       const start = Math.min(anchor, index);
       const end = Math.max(anchor, index);
 
-      // Reconstruct range starting from baseline before range selection
       const next = new Set(selectionBeforeRange);
       for (let i = start; i <= end; i++) {
         const target = data.items[i];
@@ -177,7 +230,6 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
 
       setSelectedPaths(next);
     } else {
-      // Individual toggle
       const next = new Set(selectedPaths);
       if (next.has(item.path)) {
         next.delete(item.path);
@@ -192,7 +244,6 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
 
   const handleRowClick = (index: number, item: FileItem, e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    // Don't toggle selection if clicking on buttons or links
     if (target.closest('button') || target.closest('a')) {
       return;
     }
@@ -211,9 +262,8 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
   };
 
   const handleDownloadSelected = () => {
-    const filesToDownload = data?.items?.filter(
-      (item) => selectedPaths.has(item.path) && !item.is_dir
-    ) || [];
+    const filesToDownload =
+      data?.items?.filter((item) => selectedPaths.has(item.path) && !item.is_dir) || [];
     filesToDownload.forEach((file, idx) => {
       setTimeout(() => {
         handleDownload(file);
@@ -260,16 +310,398 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     }
   };
 
+  // -------------------------------------------------------------
+  // Upload Processing Pipeline
+  // -------------------------------------------------------------
+  const executeUploadTasks = async (tasksToRun: UploadTask[], targetPath: string) => {
+    if (tasksToRun.length === 0) return;
+
+    setIsUploadWidgetOpen(true);
+    setIsUploadWidgetMinimized(false);
+
+    // Concurrency pool of 2 workers
+    const concurrency = 2;
+    let taskIndex = 0;
+    let anySuccess = false;
+
+    const runWorker = async () => {
+      while (taskIndex < tasksToRun.length) {
+        const currentTask = tasksToRun[taskIndex++];
+        if (!currentTask) break;
+
+        // Mark task as uploading
+        setUploadTasks((prev) =>
+          prev.map((t) => (t.id === currentTask.id ? { ...t, status: 'uploading', progress: 0 } : t))
+        );
+
+        if (currentTask.isDir) {
+          // Empty folder upload
+          const folderCombined = targetPath
+            ? `${targetPath}/${currentTask.relativePath}`
+            : currentTask.relativePath;
+          try {
+            const res = await fetch(
+              `/api/files/upload?path=${encodeURIComponent(folderCombined)}&is_dir=true`,
+              { method: 'POST' }
+            );
+            if (!res.ok) {
+              const errBody = await res.json().catch(() => ({}));
+              throw new Error(errBody.error || `Directory creation failed: ${res.statusText}`);
+            }
+            anySuccess = true;
+            setUploadTasks((prev) =>
+              prev.map((t) =>
+                t.id === currentTask.id ? { ...t, status: 'success', progress: 100 } : t
+              )
+            );
+          } catch (err: any) {
+            setUploadTasks((prev) =>
+              prev.map((t) =>
+                t.id === currentTask.id
+                  ? { ...t, status: 'error', error: err.message || 'Creation failed' }
+                  : t
+              )
+            );
+          }
+        } else if (currentTask.file) {
+          // File upload via XMLHttpRequest for streaming progress
+          await new Promise<void>((resolve) => {
+            const formData = new FormData();
+            formData.append('files', currentTask.file!, currentTask.relativePath);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `/api/files/upload?path=${encodeURIComponent(targetPath)}`);
+
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+                setUploadTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === currentTask.id ? { ...t, progress: percent } : t
+                  )
+                );
+              }
+            };
+
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                anySuccess = true;
+                setUploadTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === currentTask.id ? { ...t, status: 'success', progress: 100 } : t
+                  )
+                );
+              } else {
+                let errorMsg = `Upload failed (${xhr.status})`;
+                try {
+                  const parsed = JSON.parse(xhr.responseText);
+                  if (parsed.error) errorMsg = parsed.error;
+                } catch {
+                  if (xhr.status === 507) errorMsg = 'Quota exceeded: storage full';
+                }
+                setUploadTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === currentTask.id
+                      ? { ...t, status: 'error', error: errorMsg }
+                      : t
+                  )
+                );
+              }
+              resolve();
+            };
+
+            xhr.onerror = () => {
+              setUploadTasks((prev) =>
+                prev.map((t) =>
+                  t.id === currentTask.id
+                    ? { ...t, status: 'error', error: 'Network connection failed' }
+                    : t
+                )
+              );
+              resolve();
+            };
+
+            xhr.send(formData);
+          });
+        }
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(concurrency, tasksToRun.length) }, () =>
+      runWorker()
+    );
+    await Promise.all(workers);
+
+    if (anySuccess) {
+      loadFiles(currentPath);
+      onFileUploaded?.();
+    }
+  };
+
+  const queueUploads = (newTasks: UploadTask[]) => {
+    if (newTasks.length === 0) return;
+    setUploadTasks((prev) => [...prev, ...newTasks]);
+    executeUploadTasks(newTasks, currentPath);
+  };
+
+  // Standard file input selection
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const newTasks: UploadTask[] = files.map((f) => ({
+      id: `${f.name}-${Date.now()}-${Math.random()}`,
+      name: f.name,
+      relativePath: f.name,
+      size: f.size,
+      file: f,
+      status: 'pending',
+      progress: 0,
+    }));
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setIsUploadMenuOpen(false);
+    queueUploads(newTasks);
+  };
+
+  // Folder input selection (webkitdirectory)
+  const handleFolderInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const newTasks: UploadTask[] = files.map((f) => {
+      const relPath = (f as any).webkitRelativePath || f.name;
+      return {
+        id: `${relPath}-${Date.now()}-${Math.random()}`,
+        name: f.name,
+        relativePath: relPath,
+        size: f.size,
+        file: f,
+        status: 'pending',
+        progress: 0,
+      };
+    });
+
+    if (folderInputRef.current) folderInputRef.current.value = '';
+    setIsUploadMenuOpen(false);
+    queueUploads(newTasks);
+  };
+
+  // Drag and drop with recursive directory scanning
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      setIsDraggingOver(false);
+      dragCounter.current = 0;
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    dragCounter.current = 0;
+
+    const items = e.dataTransfer.items;
+    if (!items || items.length === 0) {
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length === 0) return;
+      const tasks: UploadTask[] = files.map((f) => ({
+        id: `${f.name}-${Date.now()}-${Math.random()}`,
+        name: f.name,
+        relativePath: f.name,
+        size: f.size,
+        file: f,
+        status: 'pending',
+        progress: 0,
+      }));
+      queueUploads(tasks);
+      return;
+    }
+
+    const tasks: UploadTask[] = [];
+
+    // Helper to read entries in chunks from FileSystemDirectoryReader
+    const readAllDirEntries = async (dirReader: any): Promise<any[]> => {
+      const entries: any[] = [];
+      while (true) {
+        const batch: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject);
+        });
+        if (!batch || batch.length === 0) break;
+        entries.push(...batch);
+      }
+      return entries;
+    };
+
+    const traverse = async (entry: any, basePath = ''): Promise<void> => {
+      if (!entry) return;
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject);
+        });
+        const relPath = basePath ? `${basePath}/${file.name}` : file.name;
+        tasks.push({
+          id: `${relPath}-${Date.now()}-${Math.random()}`,
+          name: file.name,
+          relativePath: relPath,
+          size: file.size,
+          file,
+          status: 'pending',
+          progress: 0,
+        });
+      } else if (entry.isDirectory) {
+        const dirRelPath = basePath ? `${basePath}/${entry.name}` : entry.name;
+        const reader = entry.createReader();
+        const children = await readAllDirEntries(reader);
+        if (children.length === 0) {
+          tasks.push({
+            id: `${dirRelPath}-${Date.now()}-${Math.random()}`,
+            name: entry.name,
+            relativePath: dirRelPath,
+            size: 0,
+            isDir: true,
+            status: 'pending',
+            progress: 0,
+          });
+        } else {
+          for (const child of children) {
+            await traverse(child, dirRelPath);
+          }
+        }
+      }
+    };
+
+    const promises: Promise<void>[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const entry = (item as any).webkitGetAsEntry ? (item as any).webkitGetAsEntry() : null;
+      if (entry) {
+        promises.push(traverse(entry));
+      } else {
+        const file = item.getAsFile();
+        if (file) {
+          tasks.push({
+            id: `${file.name}-${Date.now()}-${Math.random()}`,
+            name: file.name,
+            relativePath: file.name,
+            size: file.size,
+            file,
+            status: 'pending',
+            progress: 0,
+          });
+        }
+      }
+    }
+
+    await Promise.all(promises);
+    if (tasks.length > 0) {
+      queueUploads(tasks);
+    }
+  };
+
+  const handleDismissUploadWidget = () => {
+    setIsUploadWidgetOpen(false);
+    setUploadTasks((prev) => prev.filter((t) => t.status === 'uploading'));
+  };
+
+  const handleClearFinishedUploads = () => {
+    setUploadTasks((prev) => prev.filter((t) => t.status === 'uploading' || t.status === 'pending'));
+    if (uploadTasks.every((t) => t.status !== 'uploading' && t.status !== 'pending')) {
+      setIsUploadWidgetOpen(false);
+    }
+  };
+
   const selectedItems = data?.items?.filter((item) => selectedPaths.has(item.path)) || [];
   const selectedFiles = selectedItems.filter((item) => !item.is_dir);
   const selectedTotalSize = selectedFiles.reduce((acc, item) => acc + (item.size || 0), 0);
 
+  // Upload widget summary metrics
+  const activeUploads = uploadTasks.filter((t) => t.status === 'uploading' || t.status === 'pending');
+  const errorUploads = uploadTasks.filter((t) => t.status === 'error');
+  const completedUploads = uploadTasks.filter((t) => t.status === 'success');
+  const totalUploads = uploadTasks.length;
+  const isUploadInProgress = activeUploads.length > 0;
+  const overallProgress =
+    totalUploads > 0
+      ? Math.round(
+          uploadTasks.reduce((acc, t) => acc + (t.status === 'success' ? 100 : t.progress), 0) /
+            totalUploads
+        )
+      : 0;
+
   return (
-    <div className="space-y-4">
-      {/* Top action bar: breadcrumbs & refresh */}
-      <div className="flex items-center justify-between gap-4 p-3 bg-slate-900 border border-slate-800 rounded-xl">
+    <div
+      className="relative space-y-4"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Hidden file inputs */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileInputChange}
+        style={{ display: 'none' }}
+        multiple
+      />
+      <input
+        type="file"
+        ref={folderInputRef}
+        onChange={handleFolderInputChange}
+        style={{ display: 'none' }}
+        {...({ webkitdirectory: '', directory: '' } as any)}
+        multiple
+      />
+
+      {/* Drag and Drop Visual Overlay */}
+      {isDraggingOver && (
+        <div className="absolute inset-0 z-40 rounded-xl border-2 border-dashed border-sky-400 bg-sky-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 p-6 text-center pointer-events-none animate-in fade-in duration-150">
+          <div className="w-16 h-16 rounded-full bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-sky-400 shadow-lg shadow-sky-500/10">
+            <Upload className="w-8 h-8 animate-bounce" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-white">
+              Drop files or folders to upload
+            </h3>
+            <p className="text-xs text-sky-300">
+              Uploading to:{' '}
+              <strong className="text-white font-mono">
+                {currentPath ? `/${currentPath}` : 'Root'}
+              </strong>
+            </p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Supports recursive subdirectories and empty folders
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Top action bar: breadcrumbs, upload button & refresh */}
+      <div className="flex items-center justify-between gap-3 p-3 bg-slate-900 border border-slate-800 rounded-xl">
         {/* Breadcrumbs */}
-        <nav aria-label="Directory navigation" className="flex items-center gap-1.5 text-xs text-slate-300 overflow-x-auto py-1">
+        <nav
+          aria-label="Directory navigation"
+          className="flex items-center gap-1.5 text-xs text-slate-300 overflow-x-auto py-1 min-w-0 flex-1"
+        >
           <button
             onClick={() => handleNavigate('')}
             aria-label="Navigate to root directory"
@@ -281,36 +713,80 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
             <span>Root</span>
           </button>
 
-          {data?.breadcrumbs && data.breadcrumbs.map((crumb, idx) => {
-            const crumbPath = data.breadcrumbs.slice(0, idx + 1).join('/');
-            const isLast = idx === data.breadcrumbs.length - 1;
-            return (
-              <React.Fragment key={crumbPath}>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
-                <button
-                  onClick={() => handleNavigate(crumbPath)}
-                  aria-label={`Navigate to ${crumb}`}
-                  className={`px-2 py-1 rounded hover:bg-slate-800 transition ${
-                    isLast ? 'text-sky-400 font-semibold' : 'text-slate-400'
-                  }`}
-                >
-                  {crumb}
-                </button>
-              </React.Fragment>
-            );
-          })}
+          {data?.breadcrumbs &&
+            data.breadcrumbs.map((crumb, idx) => {
+              const crumbPath = data.breadcrumbs.slice(0, idx + 1).join('/');
+              const isLast = idx === data.breadcrumbs.length - 1;
+              return (
+                <React.Fragment key={crumbPath}>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
+                  <button
+                    onClick={() => handleNavigate(crumbPath)}
+                    aria-label={`Navigate to ${crumb}`}
+                    className={`px-2 py-1 rounded hover:bg-slate-800 transition truncate max-w-[120px] sm:max-w-none ${
+                      isLast ? 'text-sky-400 font-semibold' : 'text-slate-400'
+                    }`}
+                  >
+                    {crumb}
+                  </button>
+                </React.Fragment>
+              );
+            })}
         </nav>
 
-        {/* Refresh button */}
-        <button
-          onClick={() => loadFiles(currentPath)}
-          disabled={loading}
-          aria-label="Refresh directory contents"
-          className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
-          title="Refresh directory"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-sky-400' : ''}`} />
-        </button>
+        {/* Action Controls: Upload & Refresh */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Upload Dropdown */}
+          <div className="relative" ref={uploadMenuRef}>
+            <button
+              onClick={() => setIsUploadMenuOpen(!isUploadMenuOpen)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition text-xs font-semibold shadow-sm cursor-pointer"
+              title="Upload files or folders"
+              aria-expanded={isUploadMenuOpen}
+              aria-haspopup="true"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Upload</span>
+              <ChevronDown className="w-3 h-3 opacity-70" />
+            </button>
+
+            {isUploadMenuOpen && (
+              <div className="absolute right-0 mt-1.5 w-44 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-1.5 z-50 text-xs animate-in fade-in slide-in-from-top-1 duration-150">
+                <button
+                  onClick={() => {
+                    fileInputRef.current?.click();
+                    setIsUploadMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:bg-slate-800 hover:text-white rounded-lg transition text-left cursor-pointer"
+                >
+                  <FileUp className="w-4 h-4 text-sky-400" />
+                  <span>Upload Files</span>
+                </button>
+                <button
+                  onClick={() => {
+                    folderInputRef.current?.click();
+                    setIsUploadMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-slate-200 hover:bg-slate-800 hover:text-white rounded-lg transition text-left cursor-pointer"
+                >
+                  <FolderUp className="w-4 h-4 text-sky-400" />
+                  <span>Upload Folder</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Refresh button */}
+          <button
+            onClick={() => loadFiles(currentPath)}
+            disabled={loading}
+            aria-label="Refresh directory contents"
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer"
+            title="Refresh directory"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-sky-400' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Multi-selection action toolbar */}
@@ -337,12 +813,20 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
             {selectedFiles.length > 0 && (
               <button
                 onClick={handleDownloadSelected}
-                aria-label={`Download ${selectedFiles.length} selected ${selectedFiles.length === 1 ? 'file' : 'files'}`}
+                aria-label={`Download ${selectedFiles.length} selected ${
+                  selectedFiles.length === 1 ? 'file' : 'files'
+                }`}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition font-medium cursor-pointer"
-                title={selectedFiles.length === 1 ? 'Download selected file' : `Download ${selectedFiles.length} selected files`}
+                title={
+                  selectedFiles.length === 1
+                    ? 'Download selected file'
+                    : `Download ${selectedFiles.length} selected files`
+                }
               >
                 <Download className="w-3.5 h-3.5 text-sky-400" />
-                <span>Download{selectedFiles.length > 1 ? ` (${selectedFiles.length})` : ''}</span>
+                <span>
+                  Download{selectedFiles.length > 1 ? ` (${selectedFiles.length})` : ''}
+                </span>
               </button>
             )}
 
@@ -457,7 +941,10 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
 
                     {/* Actions: Download & Delete */}
                     <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        className="flex items-center justify-end gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {!item.is_dir && (
                           <button
                             onClick={() => handleDownload(item)}
@@ -484,17 +971,38 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
             ) : (
               <tr>
                 <td colSpan={5} className="py-14 text-center">
-                  <div className="flex flex-col items-center justify-center gap-2 max-w-sm mx-auto text-slate-500">
-                    <div className="w-10 h-10 rounded-full bg-slate-800/80 flex items-center justify-center text-slate-400 mb-1">
-                      <Folder className="w-5 h-5" />
+                  <div className="flex flex-col items-center justify-center gap-3 max-w-sm mx-auto text-slate-500">
+                    <div className="w-12 h-12 rounded-full bg-slate-800/80 flex items-center justify-center text-slate-400 mb-1 border border-slate-700/60">
+                      <Folder className="w-6 h-6" />
                     </div>
-                    <span className="text-sm font-medium text-slate-300">
-                      {loading ? 'Loading files...' : 'Folder is empty'}
-                    </span>
+                    <div className="space-y-1">
+                      <span className="text-sm font-semibold text-slate-300 block">
+                        {loading ? 'Loading files...' : 'Folder is empty'}
+                      </span>
+                      {!loading && (
+                        <p className="text-xs text-slate-400">
+                          Drag and drop files or folders here, or click Upload above.
+                        </p>
+                      )}
+                    </div>
+
                     {!loading && (
-                      <p className="text-xs text-slate-400">
-                        Mount your WebDAV storage in Finder, Explorer, or rclone to upload and sync files.
-                      </p>
+                      <div className="flex items-center gap-2 pt-2">
+                        <button
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition cursor-pointer"
+                        >
+                          <FileUp className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Select Files</span>
+                        </button>
+                        <button
+                          onClick={() => folderInputRef.current?.click()}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition cursor-pointer"
+                        >
+                          <FolderUp className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Select Folder</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </td>
@@ -503,6 +1011,125 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
           </tbody>
         </table>
       </div>
+
+      {/* Floating Upload Progress Drawer */}
+      {isUploadWidgetOpen && uploadTasks.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 w-96 max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl backdrop-blur-md overflow-hidden text-xs transition-all animate-in slide-in-from-bottom-2 duration-200">
+          {/* Header */}
+          <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800">
+            <div className="flex items-center gap-2 min-w-0">
+              {isUploadInProgress ? (
+                <Loader2 className="w-4 h-4 text-sky-400 animate-spin flex-shrink-0" />
+              ) : errorUploads.length > 0 ? (
+                <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              )}
+              <span className="font-semibold text-slate-200 truncate">
+                {isUploadInProgress
+                  ? `Uploading ${completedUploads.length + 1} of ${totalUploads}...`
+                  : errorUploads.length > 0
+                  ? `Upload finished with ${errorUploads.length} ${
+                      errorUploads.length === 1 ? 'error' : 'errors'
+                    }`
+                  : `Uploaded ${totalUploads} ${totalUploads === 1 ? 'item' : 'items'}`}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => setIsUploadWidgetMinimized(!isUploadWidgetMinimized)}
+                aria-label={isUploadWidgetMinimized ? 'Expand upload panel' : 'Collapse upload panel'}
+                className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition cursor-pointer"
+                title={isUploadWidgetMinimized ? 'Expand' : 'Collapse'}
+              >
+                {isUploadWidgetMinimized ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+              <button
+                onClick={handleDismissUploadWidget}
+                aria-label="Close upload panel"
+                className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition cursor-pointer"
+                title="Close"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full h-1 bg-slate-800 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-200 ${
+                errorUploads.length > 0 && !isUploadInProgress
+                  ? 'bg-rose-500'
+                  : 'bg-sky-500'
+              }`}
+              style={{ width: `${overallProgress}%` }}
+            />
+          </div>
+
+          {/* Task list (collapsible) */}
+          {!isUploadWidgetMinimized && (
+            <div>
+              <div className="max-h-60 overflow-y-auto divide-y divide-slate-800/50 p-1">
+                {uploadTasks.map((task) => (
+                  <div key={task.id} className="py-2 px-2.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {task.isDir ? (
+                        <Folder className="w-3.5 h-3.5 text-sky-400 flex-shrink-0 fill-sky-400/20" />
+                      ) : (
+                        <File className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-slate-200 truncate font-mono text-[11px]" title={task.relativePath}>
+                          {task.relativePath}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          {task.isDir ? 'Folder' : formatBytes(task.size)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {task.status === 'pending' && (
+                        <span className="text-[10px] text-slate-400">Pending</span>
+                      )}
+                      {task.status === 'uploading' && (
+                        <span className="text-[10px] font-mono text-sky-400">
+                          {task.progress}%
+                        </span>
+                      )}
+                      {task.status === 'success' && (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                      {task.status === 'error' && (
+                        <span className="text-[10px] text-rose-400 font-medium" title={task.error}>
+                          {task.error?.includes('quota') ? 'Quota exceeded' : 'Failed'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {!isUploadInProgress && (
+                <div className="p-2 border-t border-slate-800 bg-slate-900/60 flex justify-end">
+                  <button
+                    onClick={handleClearFinishedUploads}
+                    className="px-2.5 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition cursor-pointer"
+                  >
+                    Clear finished
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {itemsToDelete && (
@@ -533,12 +1160,14 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
                     <>
                       Are you sure you want to permanently delete{' '}
                       <strong className="text-slate-200">"{itemsToDelete[0].name}"</strong>
-                      {itemsToDelete[0].is_dir ? ' and all of its contents' : ''}? This action cannot be undone.
+                      {itemsToDelete[0].is_dir ? ' and all of its contents' : ''}? This action
+                      cannot be undone.
                     </>
                   ) : (
                     <>
                       Are you sure you want to permanently delete these{' '}
-                      <strong className="text-slate-200">{itemsToDelete.length} items</strong> and all of their contents? This action cannot be undone.
+                      <strong className="text-slate-200">{itemsToDelete.length} items</strong> and
+                      all of their contents? This action cannot be undone.
                     </>
                   )}
                 </p>

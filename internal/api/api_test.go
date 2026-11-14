@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -275,6 +276,100 @@ func TestFileExplorerOperations(t *testing.T) {
 	// 5. Verify file is gone
 	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
 		t.Fatalf("expected file to be deleted")
+	}
+}
+
+func TestFileUploadAndQuotas(t *testing.T) {
+	api, s, sm, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	s.SetDefaultQuota(500)
+	_, _, _ = s.EnsureUserProvisioned("uploader")
+	userDir, _ := s.UserStoragePath("uploader")
+
+	session := &auth.SessionData{
+		Username: "uploader",
+		Groups:   []string{"users"},
+	}
+
+	// 1. Upload recursive directory structure with multipart
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	p1, _ := writer.CreateFormFile("files", "project/assets/logo.png")
+	_, _ = p1.Write([]byte("LOGO_IMAGE_BYTES"))
+	p2, _ := writer.CreateFormFile("files", "project/readme.txt")
+	_, _ = p2.Write([]byte("Read this first."))
+	_ = writer.Close()
+
+	req := httptest.NewRequest("POST", "/api/files/upload?path=", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	addSessionCookie(t, req, sm, session)
+	rec := httptest.NewRecorder()
+	api.HandleFileUpload(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on multipart upload, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	var upRes UploadResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &upRes); err != nil {
+		t.Fatalf("failed to decode upload response: %v", err)
+	}
+	if len(upRes.Uploaded) != 2 {
+		t.Fatalf("expected 2 uploaded files, got %d", len(upRes.Uploaded))
+	}
+
+	// Verify files exist on disk
+	f1 := filepath.Join(userDir, "project", "assets", "logo.png")
+	if data, err := os.ReadFile(f1); err != nil || string(data) != "LOGO_IMAGE_BYTES" {
+		t.Fatalf("file 1 content mismatch or not found: %v", err)
+	}
+
+	f2 := filepath.Join(userDir, "project", "readme.txt")
+	if data, err := os.ReadFile(f2); err != nil || string(data) != "Read this first." {
+		t.Fatalf("file 2 content mismatch or not found: %v", err)
+	}
+
+	// Verify quota updated
+	used, limit, _ := s.GetEffectiveQuota("uploader")
+	expectedUsed := int64(len("LOGO_IMAGE_BYTES") + len("Read this first."))
+	if used != expectedUsed {
+		t.Fatalf("expected used=%d, got %d (limit=%d)", expectedUsed, used, limit)
+	}
+
+	// 2. Upload empty directory
+	emptyDirReq := httptest.NewRequest("POST", "/api/files/upload?path=project/empty_folder&is_dir=true", nil)
+	addSessionCookie(t, emptyDirReq, sm, session)
+	emptyRec := httptest.NewRecorder()
+	api.HandleFileUpload(emptyRec, emptyDirReq)
+	if emptyRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on empty directory creation, got %d", emptyRec.Code)
+	}
+	if stat, err := os.Stat(filepath.Join(userDir, "project", "empty_folder")); err != nil || !stat.IsDir() {
+		t.Fatalf("expected directory project/empty_folder to exist: %v", err)
+	}
+
+	// 3. Quota exceeded test
+	bigPayload := make([]byte, 1000)
+	bigBody := &bytes.Buffer{}
+	bigWriter := multipart.NewWriter(bigBody)
+	bp, _ := bigWriter.CreateFormFile("files", "overflow.bin")
+	_, _ = bp.Write(bigPayload)
+	_ = bigWriter.Close()
+
+	quotaReq := httptest.NewRequest("POST", "/api/files/upload?path=", bigBody)
+	quotaReq.Header.Set("Content-Type", bigWriter.FormDataContentType())
+	addSessionCookie(t, quotaReq, sm, session)
+	quotaRec := httptest.NewRecorder()
+	api.HandleFileUpload(quotaRec, quotaReq)
+
+	if quotaRec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("expected 507 Insufficient Storage on quota exceed, got %d (body: %s)", quotaRec.Code, quotaRec.Body.String())
+	}
+
+	// Verify overflow file was NOT left on disk
+	if _, err := os.Stat(filepath.Join(userDir, "overflow.bin")); !os.IsNotExist(err) {
+		t.Fatalf("expected overflow.bin to not exist on disk")
 	}
 }
 

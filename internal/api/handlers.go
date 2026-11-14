@@ -438,6 +438,9 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 				a.store.AddUsageDelta(effectiveUser, delta)
 			}
 			return
+		case http.MethodPost:
+			a.HandleFileUpload(w, r)
+			return
 		default:
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
@@ -488,9 +491,69 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 
+	case http.MethodPost:
+		a.HandleFileUpload(w, r)
+
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
+}
+
+func (a *API) HandleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	effectiveUser, _ := a.getEffectiveUser(session)
+	userDir, err := a.store.UserStoragePath(effectiveUser)
+	if err != nil {
+		http.Error(w, `{"error":"invalid user"}`, http.StatusBadRequest)
+		return
+	}
+
+	usedBytes, quotaBytes, _ := a.store.GetEffectiveQuota(effectiveUser)
+
+	if a.workerManager != nil {
+		delta, err := a.workerManager.ServeFilesUpload(effectiveUser, userDir, w, r, quotaBytes, usedBytes)
+		if err != nil {
+			log.Printf("[api] worker ServeFilesUpload error for %s: %v", effectiveUser, err)
+			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			return
+		}
+		if delta != 0 {
+			a.store.AddUsageDelta(effectiveUser, delta)
+		}
+		return
+	}
+
+	basePath := r.URL.Query().Get("path")
+	res, err := SaveUpload(userDir, basePath, r, quotaBytes, usedBytes)
+	if err != nil {
+		if errors.Is(err, ErrAccessDenied) || errors.Is(err, ErrInvalidPath) {
+			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, ErrQuotaExceeded) {
+			http.Error(w, `{"error":"quota exceeded: insufficient storage"}`, http.StatusInsufficientStorage)
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	if res.Delta != 0 {
+		a.store.AddUsageDelta(effectiveUser, res.Delta)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 func (a *API) HandleFileDownload(w http.ResponseWriter, r *http.Request) {
