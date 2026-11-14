@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
@@ -19,6 +20,7 @@ type API struct {
 	sessionManager *auth.SessionManager
 	oidcClient     *auth.OIDCClient
 	workerManager  *worker.Manager
+	startTime      time.Time
 }
 
 func NewAPI(s *store.Store, sm *auth.SessionManager, oidc *auth.OIDCClient, wm ...*worker.Manager) *API {
@@ -26,11 +28,59 @@ func NewAPI(s *store.Store, sm *auth.SessionManager, oidc *auth.OIDCClient, wm .
 		store:          s,
 		sessionManager: sm,
 		oidcClient:     oidc,
+		startTime:      time.Now(),
 	}
 	if len(wm) > 0 {
 		a.workerManager = wm[0]
 	}
 	return a
+}
+
+type HealthResponse struct {
+	Status        string `json:"status"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+	Error         string `json:"error,omitempty"`
+}
+
+// HandleHealth handles unauthenticated container health checks (/healthz, /api/health).
+func (a *API) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	uptime := int64(time.Since(a.startTime).Seconds())
+	if uptime < 0 {
+		uptime = 0
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if a.store == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(HealthResponse{
+			Status:        "unhealthy",
+			UptimeSeconds: uptime,
+			Error:         "store is not initialized",
+		})
+		return
+	}
+
+	if err := a.store.CheckHealth(); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(HealthResponse{
+			Status:        "unhealthy",
+			UptimeSeconds: uptime,
+			Error:         err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(HealthResponse{
+		Status:        "healthy",
+		UptimeSeconds: uptime,
+	})
 }
 
 type TokenResponse struct {

@@ -63,6 +63,10 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Health check endpoints (unauthenticated)
+	mux.HandleFunc("/healthz", apiServer.HandleHealth)
+	mux.HandleFunc("/api/health", apiServer.HandleHealth)
+
 	// WebDAV endpoint
 	mux.Handle("/webdav/", webdavServer)
 

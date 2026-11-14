@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
@@ -546,5 +547,123 @@ func TestAPITokenRename(t *testing.T) {
 	api.HandleRenameToken(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for GET on HandleRenameToken, got %d", rec.Code)
+	}
+}
+
+func TestAPIHealth(t *testing.T) {
+	api, s, _, tmpDir := setupTestAPI(t)
+	defer os.RemoveAll(tmpDir)
+
+	configDir := s.ConfigDir()
+	storageDir := s.StorageDir()
+
+	// 1. Success case: GET unauthenticated /healthz
+	start := time.Now()
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	rec := httptest.NewRecorder()
+	api.HandleHealth(rec, req)
+	duration := time.Since(start)
+
+	if duration > 100*time.Millisecond {
+		t.Errorf("health check took too long: %v (expected non-blocking <100ms)", duration)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+
+	var health HealthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&health); err != nil {
+		t.Fatalf("failed to decode health response: %v", err)
+	}
+	if health.Status != "healthy" {
+		t.Errorf("expected status 'healthy', got %q", health.Status)
+	}
+	if health.UptimeSeconds < 0 {
+		t.Errorf("expected non-negative uptime, got %d", health.UptimeSeconds)
+	}
+	if health.Error != "" {
+		t.Errorf("expected empty error on healthy, got %q", health.Error)
+	}
+
+	// 2. Simulated uptime
+	api.startTime = time.Now().Add(-123 * time.Second)
+	req = httptest.NewRequest("GET", "/api/health", nil)
+	rec = httptest.NewRecorder()
+	api.HandleHealth(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+	var uptimeHealth HealthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&uptimeHealth); err != nil {
+		t.Fatalf("failed to decode health response: %v", err)
+	}
+	if uptimeHealth.UptimeSeconds < 123 {
+		t.Errorf("expected uptime >= 123, got %d", uptimeHealth.UptimeSeconds)
+	}
+
+	// 3. HEAD /healthz should also succeed
+	headReq := httptest.NewRequest("HEAD", "/healthz", nil)
+	headRec := httptest.NewRecorder()
+	api.HandleHealth(headRec, headReq)
+	if headRec.Code != http.StatusOK {
+		t.Errorf("expected 200 for HEAD /healthz, got %d", headRec.Code)
+	}
+
+	// 4. Method not allowed (POST)
+	postReq := httptest.NewRequest("POST", "/healthz", nil)
+	postRec := httptest.NewRecorder()
+	api.HandleHealth(postRec, postReq)
+	if postRec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for POST, got %d", postRec.Code)
+	}
+
+	// 5. Unwritable config directory -> 503 Service Unavailable
+	if err := os.Chmod(configDir, 0555); err != nil {
+		t.Fatalf("failed to chmod configDir: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	api.HandleHealth(rec, req)
+	_ = os.Chmod(configDir, 0755)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable for unwritable configDir, got %d", rec.Code)
+	}
+	var unwritableConfig HealthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&unwritableConfig); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if unwritableConfig.Status != "unhealthy" || unwritableConfig.Error == "" {
+		t.Errorf("expected unhealthy response with error message, got: %+v", unwritableConfig)
+	}
+
+	// 6. Unwritable storage directory -> 503 Service Unavailable
+	if err := os.Chmod(storageDir, 0555); err != nil {
+		t.Fatalf("failed to chmod storageDir: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	api.HandleHealth(rec, req)
+	_ = os.Chmod(storageDir, 0755)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable for unwritable storageDir, got %d", rec.Code)
+	}
+	var unwritableStorage HealthResponse
+	if err := json.NewDecoder(rec.Body).Decode(&unwritableStorage); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if unwritableStorage.Status != "unhealthy" || unwritableStorage.Error == "" {
+		t.Errorf("expected unhealthy response with error message, got: %+v", unwritableStorage)
+	}
+
+	// 7. Nil store -> 503 Service Unavailable
+	nilAPI := NewAPI(nil, nil, nil)
+	rec = httptest.NewRecorder()
+	nilAPI.HandleHealth(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for nil store, got %d", rec.Code)
 	}
 }

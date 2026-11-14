@@ -499,6 +499,48 @@ func (s *Store) DefaultQuota() int64 {
 	return s.defaultQuotaBytes
 }
 
+// ConfigDir returns the configured config directory path.
+func (s *Store) ConfigDir() string {
+	return s.configDir
+}
+
+// StorageDir returns the configured storage directory path.
+func (s *Store) StorageDir() string {
+	return s.storageDir
+}
+
+// CheckHealth verifies that the critical config and storage directories exist and are writable.
+func (s *Store) CheckHealth() error {
+	if err := checkDirWritable(s.configDir); err != nil {
+		return fmt.Errorf("config directory not writable: %w", err)
+	}
+	if err := checkDirWritable(s.storageDir); err != nil {
+		return fmt.Errorf("storage directory not writable: %w", err)
+	}
+	return nil
+}
+
+func checkDirWritable(dir string) error {
+	if dir == "" {
+		return errors.New("directory path is empty")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat directory %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	tmpFile, err := os.CreateTemp(dir, ".healthcheck-*")
+	if err != nil {
+		return fmt.Errorf("directory %s is not writable: %w", dir, err)
+	}
+	tmpName := tmpFile.Name()
+	_ = tmpFile.Close()
+	_ = os.Remove(tmpName)
+	return nil
+}
+
 // GetUserStorageUsage calculates or returns cached disk space used by a user in bytes.
 // Usage is calculated from disk once on initial access and maintained in-memory via delta updates.
 func (s *Store) GetUserStorageUsage(username string) (int64, error) {

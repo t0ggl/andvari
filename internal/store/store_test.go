@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -229,5 +230,63 @@ func TestStoreRenameToken(t *testing.T) {
 	// 5. Rename for non-existent user fails
 	if _, err := s.RenameToken("nonexistent", tokenID, "New Name"); err != ErrUserNotFound {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestStoreCheckHealth(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "andvari-health-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configDir := filepath.Join(tmpDir, "config")
+	storageDir := filepath.Join(tmpDir, "data")
+
+	s, err := NewStore(configDir, storageDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	// 1. Healthy store
+	if err := s.CheckHealth(); err != nil {
+		t.Fatalf("expected healthy check, got: %v", err)
+	}
+
+	if s.ConfigDir() != configDir {
+		t.Fatalf("expected ConfigDir %q, got %q", configDir, s.ConfigDir())
+	}
+	if s.StorageDir() != storageDir {
+		t.Fatalf("expected StorageDir %q, got %q", storageDir, s.StorageDir())
+	}
+
+	// 2. Unwritable config directory
+	if err := os.Chmod(configDir, 0555); err != nil {
+		t.Fatalf("failed to chmod configDir: %v", err)
+	}
+	if err := s.CheckHealth(); err == nil {
+		_ = os.Chmod(configDir, 0755)
+		t.Fatalf("expected error for unwritable configDir, got nil")
+	}
+	_ = os.Chmod(configDir, 0755)
+
+	// Healthy again
+	if err := s.CheckHealth(); err != nil {
+		t.Fatalf("expected healthy check after restoring configDir, got: %v", err)
+	}
+
+	// 3. Unwritable storage directory
+	if err := os.Chmod(storageDir, 0555); err != nil {
+		t.Fatalf("failed to chmod storageDir: %v", err)
+	}
+	if err := s.CheckHealth(); err == nil {
+		_ = os.Chmod(storageDir, 0755)
+		t.Fatalf("expected error for unwritable storageDir, got nil")
+	}
+	_ = os.Chmod(storageDir, 0755)
+
+	// Healthy again
+	if err := s.CheckHealth(); err != nil {
+		t.Fatalf("expected healthy check after restoring storageDir, got: %v", err)
 	}
 }
