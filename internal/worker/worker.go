@@ -325,6 +325,27 @@ func RunWorkerCLI(args []string) {
 		lastActive = time.Now()
 		mu.Unlock()
 
+		if r.URL.Query().Get("format") == "zip" || r.URL.Query().Get("archive") == "zip" || len(r.URL.Query()["paths"]) > 0 {
+			paths := r.URL.Query()["paths"]
+			if len(paths) == 0 {
+				if single := r.URL.Query().Get("path"); single != "" {
+					paths = []string{single}
+				}
+			}
+			if err := explorer.DownloadArchive(w, r, *userDir, paths); err != nil {
+				if errors.Is(err, explorer.ErrAccessDenied) {
+					http.Error(w, "Access denied", http.StatusForbidden)
+					return
+				}
+				if errors.Is(err, explorer.ErrPathNotFound) {
+					http.Error(w, "File not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, "Failed to download archive", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		reqPath := r.URL.Query().Get("path")
 		if err := explorer.DownloadFile(w, r, *userDir, reqPath); err != nil {
 			if errors.Is(err, explorer.ErrAccessDenied) {
@@ -336,6 +357,118 @@ func RunWorkerCLI(args []string) {
 				return
 			}
 			http.Error(w, "Failed to download file", http.StatusInternalServerError)
+			return
+		}
+	})
+
+	// Web UI File Folder Creation
+	mux.HandleFunc("/_worker/files/folder", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastActive = time.Now()
+		mu.Unlock()
+
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		reqPath := r.URL.Query().Get("path")
+		if reqPath == "" && r.Body != nil {
+			var body struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			reqPath = body.Path
+		}
+
+		if err := explorer.CreateFolder(*userDir, reqPath); err != nil {
+			if errors.Is(err, explorer.ErrAccessDenied) || errors.Is(err, explorer.ErrInvalidPath) {
+				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+				return
+			}
+			if errors.Is(err, os.ErrExist) {
+				http.Error(w, `{"error":"folder already exists"}`, http.StatusConflict)
+				return
+			}
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	})
+
+	// Web UI File Rename / Move
+	mux.HandleFunc("/_worker/files/rename", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastActive = time.Now()
+		mu.Unlock()
+
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		oldPath := r.URL.Query().Get("old_path")
+		newPath := r.URL.Query().Get("new_path")
+		if (oldPath == "" || newPath == "") && r.Body != nil {
+			var body struct {
+				OldPath string `json:"old_path"`
+				NewPath string `json:"new_path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if oldPath == "" {
+				oldPath = body.OldPath
+			}
+			if newPath == "" {
+				newPath = body.NewPath
+			}
+		}
+
+		delta, err := explorer.RenamePath(*userDir, oldPath, newPath)
+		if err != nil {
+			if errors.Is(err, explorer.ErrAccessDenied) || errors.Is(err, explorer.ErrInvalidPath) {
+				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+				return
+			}
+			if errors.Is(err, explorer.ErrPathNotFound) {
+				http.Error(w, `{"error":"path not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+
+		if delta != 0 {
+			w.Header().Set("X-Andvari-Usage-Delta", strconv.FormatInt(delta, 10))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "delta": delta})
+	})
+
+	// Web UI File Archive (ZIP) Download
+	mux.HandleFunc("/_worker/files/archive", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastActive = time.Now()
+		mu.Unlock()
+
+		paths := r.URL.Query()["paths"]
+		if len(paths) == 0 {
+			if single := r.URL.Query().Get("path"); single != "" {
+				paths = []string{single}
+			}
+		}
+
+		if err := explorer.DownloadArchive(w, r, *userDir, paths); err != nil {
+			if errors.Is(err, explorer.ErrAccessDenied) {
+				http.Error(w, "Access denied", http.StatusForbidden)
+				return
+			}
+			if errors.Is(err, explorer.ErrPathNotFound) {
+				http.Error(w, "File not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, fmt.Sprintf("Failed to create archive: %v", err), http.StatusInternalServerError)
 			return
 		}
 	})

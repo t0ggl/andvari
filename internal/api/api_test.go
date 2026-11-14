@@ -264,8 +264,44 @@ func TestFileExplorerOperations(t *testing.T) {
 		t.Fatalf("expected 403 on path traversal, got %d", rec.Code)
 	}
 
-	// 4. Delete file
-	req = httptest.NewRequest("DELETE", "/api/files?path=documents/notes.txt", nil)
+	// 4. Create folder
+	req = httptest.NewRequest("POST", "/api/files/folder?path=documents/subfolder", nil)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleCreateFolder(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on folder creation, got %d", rec.Code)
+	}
+	if fi, err := os.Stat(filepath.Join(userDir, "documents", "subfolder")); err != nil || !fi.IsDir() {
+		t.Fatalf("expected subfolder to exist")
+	}
+
+	// 5. Rename path
+	req = httptest.NewRequest("POST", "/api/files/rename?old_path=documents/notes.txt&new_path=documents/subfolder/renamed.txt", nil)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleRenamePath(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on rename, got %d", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(userDir, "documents", "subfolder", "renamed.txt")); err != nil {
+		t.Fatalf("expected renamed.txt to exist")
+	}
+
+	// 6. Archive download
+	req = httptest.NewRequest("GET", "/api/files/archive?paths=documents", nil)
+	addSessionCookie(t, req, sm, session)
+	rec = httptest.NewRecorder()
+	api.HandleArchiveDownload(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on archive download, got %d", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "application/zip" {
+		t.Errorf("expected application/zip, got %s", rec.Header().Get("Content-Type"))
+	}
+
+	// 7. Delete file
+	req = httptest.NewRequest("DELETE", "/api/files?path=documents/subfolder/renamed.txt", nil)
 	addSessionCookie(t, req, sm, session)
 	rec = httptest.NewRecorder()
 	api.HandleFiles(rec, req)
@@ -274,8 +310,8 @@ func TestFileExplorerOperations(t *testing.T) {
 		t.Fatalf("expected 200 on delete, got %d", rec.Code)
 	}
 
-	// 5. Verify file is gone
-	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+	// 8. Verify file is gone
+	if _, err := os.Stat(filepath.Join(userDir, "documents", "subfolder", "renamed.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expected file to be deleted")
 	}
 }

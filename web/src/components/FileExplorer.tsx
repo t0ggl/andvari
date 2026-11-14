@@ -17,6 +17,9 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  FolderPlus,
+  Pencil,
+  Archive,
 } from 'lucide-react';
 import { ExplorerResult, FileItem } from '../types';
 
@@ -76,6 +79,20 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
   // Styled modal state supporting single or batch deletion
   const [itemsToDelete, setItemsToDelete] = useState<FileItem[] | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // New folder modal state
+  const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderLoading, setNewFolderLoading] = useState(false);
+  const [newFolderError, setNewFolderError] = useState<string | null>(null);
+  const newFolderInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Rename modal state
+  const [itemToRename, setItemToRename] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   // Upload state
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -155,12 +172,37 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     }
   }, [someSelected]);
 
-  // Global keydown handler for Escape (close modal / clear selection) and Ctrl+A / Cmd+A
+  // Auto-focus New Folder input
+  useEffect(() => {
+    if (isNewFolderOpen && newFolderInputRef.current) {
+      newFolderInputRef.current.focus();
+      newFolderInputRef.current.select();
+    }
+  }, [isNewFolderOpen]);
+
+  // Auto-focus Rename input and select filename
+  useEffect(() => {
+    if (itemToRename && renameInputRef.current) {
+      renameInputRef.current.focus();
+      const lastDot = itemToRename.name.lastIndexOf('.');
+      if (!itemToRename.is_dir && lastDot > 0) {
+        renameInputRef.current.setSelectionRange(0, lastDot);
+      } else {
+        renameInputRef.current.select();
+      }
+    }
+  }, [itemToRename]);
+
+  // Global keydown handler for Escape, F2, and Ctrl+A / Cmd+A
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (itemsToDelete) {
           setItemsToDelete(null);
+        } else if (isNewFolderOpen) {
+          setIsNewFolderOpen(false);
+        } else if (itemToRename) {
+          setItemToRename(null);
         } else if (isUploadMenuOpen) {
           setIsUploadMenuOpen(false);
         } else if (selectedPaths.size > 0) {
@@ -168,10 +210,23 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
           setAnchorIndex(null);
           setSelectionBeforeRange(new Set());
         }
+      } else if (e.key === 'F2') {
+        const active = document.activeElement;
+        const isInput = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+        if (!isInput && !itemsToDelete && !isNewFolderOpen && !itemToRename && selectedPaths.size === 1) {
+          e.preventDefault();
+          const selectedPath = Array.from(selectedPaths)[0];
+          const item = data?.items?.find((i) => i.path === selectedPath);
+          if (item) {
+            setItemToRename(item);
+            setRenameValue(item.name);
+            setRenameError(null);
+          }
+        }
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         const active = document.activeElement;
         const isInput = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
-        if (!isInput && !itemsToDelete && data?.items && data.items.length > 0) {
+        if (!isInput && !itemsToDelete && !isNewFolderOpen && !itemToRename && data?.items && data.items.length > 0) {
           e.preventDefault();
           const allPaths = new Set(data.items.map((i) => i.path));
           setSelectedPaths(allPaths);
@@ -182,7 +237,7 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [itemsToDelete, selectedPaths, data, isUploadMenuOpen]);
+  }, [itemsToDelete, isNewFolderOpen, itemToRename, selectedPaths, data, isUploadMenuOpen]);
 
   const handleNavigate = (path: string) => {
     setSelectedPaths(new Set());
@@ -261,14 +316,122 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
     window.open(url, '_blank');
   };
 
-  const handleDownloadSelected = () => {
-    const filesToDownload =
-      data?.items?.filter((item) => selectedPaths.has(item.path) && !item.is_dir) || [];
-    filesToDownload.forEach((file, idx) => {
-      setTimeout(() => {
-        handleDownload(file);
-      }, idx * 150);
-    });
+  const handleDownloadArchive = (paths: string[], filename?: string) => {
+    const params = new URLSearchParams();
+    paths.forEach((p) => params.append('paths', p));
+    if (filename) {
+      params.set('filename', filename);
+    }
+    const url = `/api/files/archive?${params.toString()}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || 'archive.zip';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDownloadZip = () => {
+    const items = data?.items?.filter((item) => selectedPaths.has(item.path)) || [];
+    if (items.length === 0) return;
+    const filename = items.length === 1 && items[0].is_dir ? `${items[0].name}.zip` : 'archive.zip';
+    handleDownloadArchive(items.map((i) => i.path), filename);
+  };
+
+  const handleDownloadFolderZip = (item: FileItem) => {
+    handleDownloadArchive([item.path], `${item.name}.zip`);
+  };
+
+  const handleStartRename = (item: FileItem) => {
+    setItemToRename(item);
+    setRenameValue(item.name);
+    setRenameError(null);
+  };
+
+  const handleCreateFolderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newFolderName.trim();
+    if (!trimmed) {
+      setNewFolderError('Folder name cannot be empty');
+      return;
+    }
+    if (trimmed.includes('/') || trimmed.includes('\\')) {
+      setNewFolderError('Folder name cannot contain slashes');
+      return;
+    }
+
+    setNewFolderLoading(true);
+    setNewFolderError(null);
+
+    const folderPath = currentPath ? `${currentPath}/${trimmed}` : trimmed;
+    try {
+      const res = await fetch(`/api/files/folder?path=${encodeURIComponent(folderPath)}`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to create folder');
+      }
+      setIsNewFolderOpen(false);
+      setNewFolderName('');
+      loadFiles(currentPath);
+    } catch (err: any) {
+      setNewFolderError(err.message);
+    } finally {
+      setNewFolderLoading(false);
+    }
+  };
+
+  const handleRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!itemToRename) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      setRenameError('Name cannot be empty');
+      return;
+    }
+    if (trimmed.includes('/') || trimmed.includes('\\')) {
+      setRenameError('Name cannot contain slashes');
+      return;
+    }
+    if (trimmed === itemToRename.name) {
+      setItemToRename(null);
+      return;
+    }
+
+    setRenameLoading(true);
+    setRenameError(null);
+
+    const newPath = currentPath ? `${currentPath}/${trimmed}` : trimmed;
+    try {
+      const res = await fetch('/api/files/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          old_path: itemToRename.path,
+          new_path: newPath,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to rename item');
+      }
+      setItemToRename(null);
+      setSelectedPaths((prev) => {
+        if (prev.has(itemToRename.path)) {
+          const next = new Set(prev);
+          next.delete(itemToRename.path);
+          next.add(newPath);
+          return next;
+        }
+        return prev;
+      });
+      loadFiles(currentPath);
+    } catch (err: any) {
+      setRenameError(err.message);
+    } finally {
+      setRenameLoading(false);
+    }
   };
 
   const handleDeleteSelected = () => {
@@ -632,6 +795,8 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
   const selectedItems = data?.items?.filter((item) => selectedPaths.has(item.path)) || [];
   const selectedFiles = selectedItems.filter((item) => !item.is_dir);
   const selectedTotalSize = selectedFiles.reduce((acc, item) => acc + (item.size || 0), 0);
+  const hasSelectedFolder = selectedItems.some((item) => item.is_dir);
+  const isMultipleSelected = selectedItems.length > 1;
 
   // Upload widget summary metrics
   const activeUploads = uploadTasks.filter((t) => t.status === 'uploading' || t.status === 'pending');
@@ -734,8 +899,21 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
             })}
         </nav>
 
-        {/* Action Controls: Upload & Refresh */}
+        {/* Action Controls: New Folder, Upload & Refresh */}
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => {
+              setNewFolderName('');
+              setNewFolderError(null);
+              setIsNewFolderOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg transition text-xs font-semibold border border-slate-700/60 shadow-sm cursor-pointer"
+            title="Create new folder"
+          >
+            <FolderPlus className="w-3.5 h-3.5 text-sky-400" />
+            <span>New Folder</span>
+          </button>
+
           {/* Upload Dropdown */}
           <div className="relative" ref={uploadMenuRef}>
             <button
@@ -810,25 +988,29 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
           </div>
 
           <div className="flex items-center gap-2">
-            {selectedFiles.length > 0 && (
+            {selectedItems.length > 0 && (hasSelectedFolder || isMultipleSelected ? (
               <button
-                onClick={handleDownloadSelected}
-                aria-label={`Download ${selectedFiles.length} selected ${
-                  selectedFiles.length === 1 ? 'file' : 'files'
-                }`}
+                onClick={handleDownloadZip}
+                aria-label={`Download ${selectedItems.length} selected items as ZIP`}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition font-medium cursor-pointer"
-                title={
-                  selectedFiles.length === 1
-                    ? 'Download selected file'
-                    : `Download ${selectedFiles.length} selected files`
-                }
+                title="Download selected items as ZIP archive"
               >
-                <Download className="w-3.5 h-3.5 text-sky-400" />
+                <Archive className="w-3.5 h-3.5 text-sky-400" />
                 <span>
-                  Download{selectedFiles.length > 1 ? ` (${selectedFiles.length})` : ''}
+                  Download ZIP{isMultipleSelected ? ` (${selectedItems.length})` : ''}
                 </span>
               </button>
-            )}
+            ) : selectedFiles.length === 1 ? (
+              <button
+                onClick={() => handleDownload(selectedFiles[0])}
+                aria-label="Download selected file"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition font-medium cursor-pointer"
+                title="Download selected file"
+              >
+                <Download className="w-3.5 h-3.5 text-sky-400" />
+                <span>Download</span>
+              </button>
+            ) : null)}
 
             <button
               onClick={handleDeleteSelected}
@@ -939,13 +1121,22 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
                       {formatDate(item.mod_time)}
                     </td>
 
-                    {/* Actions: Download & Delete */}
+                    {/* Actions: Download, Rename & Delete */}
                     <td className="py-3 px-4 text-right">
                       <div
                         className="flex items-center justify-end gap-1"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {!item.is_dir && (
+                        {item.is_dir ? (
+                          <button
+                            onClick={() => handleDownloadFolderZip(item)}
+                            aria-label={`Download folder ${item.name} as ZIP`}
+                            className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition cursor-pointer"
+                            title="Download folder as ZIP"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
                           <button
                             onClick={() => handleDownload(item)}
                             aria-label={`Download file ${item.name}`}
@@ -955,6 +1146,14 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
                             <Download className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        <button
+                          onClick={() => handleStartRename(item)}
+                          aria-label={`Rename ${item.is_dir ? 'folder' : 'file'} ${item.name}`}
+                          className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition cursor-pointer"
+                          title={`Rename ${item.is_dir ? 'folder' : 'file'} (F2)`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => setItemsToDelete([item])}
                           aria-label={`Delete ${item.is_dir ? 'folder' : 'file'} ${item.name}`}
@@ -1216,6 +1415,172 @@ export const FileExplorer: React.FC<Props> = ({ effectiveUsername, onFileDeleted
                   : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Folder Modal */}
+      {isNewFolderOpen && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !newFolderLoading) setIsNewFolderOpen(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-folder-dialog-title"
+            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-sky-500/10 text-sky-400 rounded-lg">
+                <FolderPlus className="w-5 h-5 flex-shrink-0" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="new-folder-dialog-title" className="text-base font-semibold text-white">
+                  New Folder
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Create a new folder in{' '}
+                  <span className="text-slate-200 font-mono">
+                    {currentPath ? `/${currentPath}` : '/'}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateFolderSubmit} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  ref={newFolderInputRef}
+                  value={newFolderName}
+                  onChange={(e) => {
+                    setNewFolderName(e.target.value);
+                    setNewFolderError(null);
+                  }}
+                  placeholder="Folder name"
+                  disabled={newFolderLoading}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  autoFocus
+                />
+                {newFolderError && (
+                  <p className="text-xs text-rose-400 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{newFolderError}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={newFolderLoading}
+                  onClick={() => setIsNewFolderOpen(false)}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={newFolderLoading || !newFolderName.trim()}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  {newFolderLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <span>Create</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Modal */}
+      {itemToRename && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !renameLoading) setItemToRename(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-dialog-title"
+            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 space-y-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-sky-500/10 text-sky-400 rounded-lg">
+                <Pencil className="w-5 h-5 flex-shrink-0" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="rename-dialog-title" className="text-base font-semibold text-white">
+                  Rename {itemToRename.is_dir ? 'Folder' : 'File'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Enter a new name for{' '}
+                  <span className="text-slate-200 font-semibold">{itemToRename.name}</span>
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleRenameSubmit} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  ref={renameInputRef}
+                  value={renameValue}
+                  onChange={(e) => {
+                    setRenameValue(e.target.value);
+                    setRenameError(null);
+                  }}
+                  placeholder="New name"
+                  disabled={renameLoading}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  autoFocus
+                />
+                {renameError && (
+                  <p className="text-xs text-rose-400 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{renameError}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={renameLoading}
+                  onClick={() => setItemToRename(null)}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    renameLoading || !renameValue.trim() || renameValue.trim() === itemToRename.name
+                  }
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  {renameLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Renaming...</span>
+                    </>
+                  ) : (
+                    <span>Rename</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

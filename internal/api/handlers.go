@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -489,7 +490,18 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		case http.MethodPost:
+			if r.URL.Query().Get("action") == "mkdir" {
+				a.HandleCreateFolder(w, r)
+				return
+			}
+			if r.URL.Query().Get("action") == "rename" {
+				a.HandleRenamePath(w, r)
+				return
+			}
 			a.HandleFileUpload(w, r)
+			return
+		case http.MethodPatch:
+			a.HandleRenamePath(w, r)
 			return
 		default:
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -542,7 +554,18 @@ func (a *API) HandleFiles(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 
 	case http.MethodPost:
+		if r.URL.Query().Get("action") == "mkdir" {
+			a.HandleCreateFolder(w, r)
+			return
+		}
+		if r.URL.Query().Get("action") == "rename" {
+			a.HandleRenamePath(w, r)
+			return
+		}
 		a.HandleFileUpload(w, r)
+
+	case http.MethodPatch:
+		a.HandleRenamePath(w, r)
 
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -607,6 +630,11 @@ func (a *API) HandleFileUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) HandleFileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("archive") == "zip" || r.URL.Query().Get("format") == "zip" || len(r.URL.Query()["paths"]) > 0 {
+		a.HandleArchiveDownload(w, r)
+		return
+	}
+
 	session, err := a.sessionManager.GetSession(r)
 	if err != nil || session == nil || session.Username == "" {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
@@ -639,6 +667,172 @@ func (a *API) HandleFileDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "failed to download file", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (a *API) HandleCreateFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	effectiveUser, _ := a.getEffectiveUser(session)
+	userDir, err := a.store.UserStoragePath(effectiveUser)
+	if err != nil {
+		http.Error(w, `{"error":"invalid user"}`, http.StatusBadRequest)
+		return
+	}
+
+	if a.workerManager != nil {
+		if err := a.workerManager.ServeFilesCreateFolder(effectiveUser, userDir, w, r); err != nil {
+			log.Printf("[api] worker ServeFilesCreateFolder error for %s: %v", effectiveUser, err)
+			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" && r.Body != nil {
+		var body struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		reqPath = body.Path
+	}
+
+	if err := CreateFolder(userDir, reqPath); err != nil {
+		if errors.Is(err, ErrAccessDenied) || errors.Is(err, ErrInvalidPath) {
+			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, os.ErrExist) {
+			http.Error(w, `{"error":"folder already exists"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (a *API) HandleRenamePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	effectiveUser, _ := a.getEffectiveUser(session)
+	userDir, err := a.store.UserStoragePath(effectiveUser)
+	if err != nil {
+		http.Error(w, `{"error":"invalid user"}`, http.StatusBadRequest)
+		return
+	}
+
+	if a.workerManager != nil {
+		delta, err := a.workerManager.ServeFilesRename(effectiveUser, userDir, w, r)
+		if err != nil {
+			log.Printf("[api] worker ServeFilesRename error for %s: %v", effectiveUser, err)
+			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			return
+		}
+		if delta != 0 {
+			a.store.AddUsageDelta(effectiveUser, delta)
+		}
+		return
+	}
+
+	oldPath := r.URL.Query().Get("old_path")
+	newPath := r.URL.Query().Get("new_path")
+	if (oldPath == "" || newPath == "") && r.Body != nil {
+		var body struct {
+			OldPath string `json:"old_path"`
+			NewPath string `json:"new_path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if oldPath == "" {
+			oldPath = body.OldPath
+		}
+		if newPath == "" {
+			newPath = body.NewPath
+		}
+	}
+
+	delta, err := RenamePath(userDir, oldPath, newPath)
+	if err != nil {
+		if errors.Is(err, ErrAccessDenied) || errors.Is(err, ErrInvalidPath) {
+			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, ErrPathNotFound) {
+			http.Error(w, `{"error":"path not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	if delta != 0 {
+		a.store.AddUsageDelta(effectiveUser, delta)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "delta": delta})
+}
+
+func (a *API) HandleArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	session, err := a.sessionManager.GetSession(r)
+	if err != nil || session == nil || session.Username == "" {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+
+	effectiveUser, _ := a.getEffectiveUser(session)
+	userDir, err := a.store.UserStoragePath(effectiveUser)
+	if err != nil {
+		http.Error(w, "invalid user", http.StatusBadRequest)
+		return
+	}
+
+	if a.workerManager != nil {
+		if err := a.workerManager.ServeArchiveDownload(effectiveUser, userDir, w, r); err != nil {
+			log.Printf("[api] worker ServeArchiveDownload error for %s: %v", effectiveUser, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	paths := r.URL.Query()["paths"]
+	if len(paths) == 0 {
+		if single := r.URL.Query().Get("path"); single != "" {
+			paths = []string{single}
+		}
+	}
+
+	if err := DownloadArchive(w, r, userDir, paths); err != nil {
+		if errors.Is(err, ErrPathNotFound) {
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, ErrAccessDenied) {
+			http.Error(w, "access denied", http.StatusForbidden)
+			return
+		}
+		http.Error(w, "failed to download archive", http.StatusInternalServerError)
 		return
 	}
 }

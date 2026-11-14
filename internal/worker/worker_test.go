@@ -307,6 +307,49 @@ func TestWorkerFileExplorerOps(t *testing.T) {
 	if string(content) != "greetings from landlock worker!" {
 		t.Errorf("uploaded content mismatch: %q", string(content))
 	}
+
+	// 5. Create folder via worker
+	mkdirReq := httptest.NewRequest("POST", "/api/files/folder?path=new_folder", nil)
+	mkdirRec := httptest.NewRecorder()
+	if err := mgr.ServeFilesCreateFolder("bob", userDir, mkdirRec, mkdirReq); err != nil {
+		t.Fatalf("ServeFilesCreateFolder failed: %v", err)
+	}
+	if mkdirRec.Code != http.StatusOK {
+		t.Fatalf("ServeFilesCreateFolder status: %d (body: %s)", mkdirRec.Code, mkdirRec.Body.String())
+	}
+	if fi, err := os.Stat(filepath.Join(userDir, "new_folder")); err != nil || !fi.IsDir() {
+		t.Fatalf("expected new_folder directory to exist in userDir")
+	}
+
+	// 6. Rename/move file via worker
+	renameReq := httptest.NewRequest("POST", "/api/files/rename?old_path=docs/nested/sub/hello.txt&new_path=new_folder/moved.txt", nil)
+	renameRec := httptest.NewRecorder()
+	renDelta, err := mgr.ServeFilesRename("bob", userDir, renameRec, renameReq)
+	if err != nil {
+		t.Fatalf("ServeFilesRename failed: %v", err)
+	}
+	if renameRec.Code != http.StatusOK {
+		t.Fatalf("ServeFilesRename status: %d (body: %s)", renameRec.Code, renameRec.Body.String())
+	}
+	if renDelta != 0 {
+		t.Errorf("expected renDelta=0, got %d", renDelta)
+	}
+	if _, err := os.Stat(filepath.Join(userDir, "new_folder", "moved.txt")); err != nil {
+		t.Fatalf("expected moved.txt to exist in new_folder")
+	}
+
+	// 7. Download archive via worker
+	archReq := httptest.NewRequest("GET", "/api/files/archive?paths=new_folder", nil)
+	archRec := httptest.NewRecorder()
+	if err := mgr.ServeArchiveDownload("bob", userDir, archRec, archReq); err != nil {
+		t.Fatalf("ServeArchiveDownload failed: %v", err)
+	}
+	if archRec.Code != http.StatusOK {
+		t.Fatalf("ServeArchiveDownload status: %d", archRec.Code)
+	}
+	if archRec.Header().Get("Content-Type") != "application/zip" {
+		t.Errorf("expected application/zip Content-Type, got %s", archRec.Header().Get("Content-Type"))
+	}
 }
 
 func TestWorkerProcessRestartOnKill(t *testing.T) {

@@ -42,3 +42,15 @@ func GetPathSize(path string) int64 {
 func SaveUpload(userDir, basePath string, r *http.Request, quotaLimit, usedBytes int64) (*UploadResult, error) {
 	return explorer.SaveUpload(userDir, basePath, r, quotaLimit, usedBytes)
 }
+
+func CreateFolder(userDir, requestedPath string) error {
+	return explorer.CreateFolder(userDir, requestedPath)
+}
+
+func RenamePath(userDir, oldPath, newPath string) (int64, error) {
+	return explorer.RenamePath(userDir, oldPath, newPath)
+}
+
+func DownloadArchive(w http.ResponseWriter, r *http.Request, userDir string, requestedPaths []string) error {
+	return explorer.DownloadArchive(w, r, userDir, requestedPaths)
+}

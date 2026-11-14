@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"archive/zip"
 	"errors"
 	"fmt"
 	"io"
@@ -68,14 +69,23 @@ func ResolveSafePath(userDir, requestedPath string) (string, error) {
 		return "", ErrAccessDenied
 	}
 
-	// If the file or directory exists on disk, resolve symlinks to ensure
+	// Resolve symlinks on the path or its nearest existing ancestor to ensure
 	// symlinks cannot escape the canonical user directory.
 	if realUserDir, err := filepath.EvalSymlinks(userDir); err == nil {
-		if realTarget, err := filepath.EvalSymlinks(fullPath); err == nil {
-			realRel, err := filepath.Rel(realUserDir, realTarget)
-			if err != nil || strings.HasPrefix(realRel, "..") || realRel == ".." {
-				return "", ErrAccessDenied
+		cur := fullPath
+		for {
+			if realTarget, err := filepath.EvalSymlinks(cur); err == nil {
+				realRel, err := filepath.Rel(realUserDir, realTarget)
+				if err != nil || strings.HasPrefix(realRel, "..") || realRel == ".." {
+					return "", ErrAccessDenied
+				}
+				break
 			}
+			parent := filepath.Dir(cur)
+			if parent == cur || parent == "." || parent == "/" {
+				break
+			}
+			cur = parent
 		}
 	}
 
@@ -165,7 +175,7 @@ func DownloadFile(w http.ResponseWriter, r *http.Request, userDir, requestedPath
 	}
 
 	if stat.IsDir() {
-		return errors.New("cannot download a directory directly")
+		return DownloadArchive(w, r, userDir, []string{requestedPath})
 	}
 
 	file, err := os.Open(targetPath)
@@ -186,6 +196,345 @@ func DownloadFile(w http.ResponseWriter, r *http.Request, userDir, requestedPath
 
 	_, err = io.Copy(w, file)
 	return err
+}
+
+// CreateFolder creates a directory at requestedPath safely within userDir.
+func CreateFolder(userDir, requestedPath string) error {
+	if unescaped, err := url.PathUnescape(requestedPath); err == nil {
+		requestedPath = unescaped
+	}
+	if unescaped, err := url.QueryUnescape(requestedPath); err == nil {
+		requestedPath = unescaped
+	}
+
+	if strings.Contains(requestedPath, "\x00") {
+		return ErrAccessDenied
+	}
+
+	normalized := strings.ReplaceAll(requestedPath, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || filepath.IsAbs(requestedPath) {
+		return ErrAccessDenied
+	}
+
+	cleanRel := filepath.Clean(normalized)
+	if cleanRel == "." || cleanRel == "" {
+		return ErrInvalidPath
+	}
+
+	targetPath, err := ResolveSafePath(userDir, cleanRel)
+	if err != nil {
+		return err
+	}
+	if targetPath == userDir {
+		return ErrInvalidPath
+	}
+
+	if realUserDir, err := filepath.EvalSymlinks(userDir); err == nil {
+		if realTarget, err := filepath.EvalSymlinks(targetPath); err == nil && realTarget == realUserDir {
+			return ErrInvalidPath
+		}
+	}
+
+	if _, err := os.Stat(targetPath); err == nil {
+		return os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return os.MkdirAll(targetPath, 0755)
+}
+
+// RenamePath moves or renames a file or directory within userDir.
+// It verifies that both oldPath and newPath do not escape userDir,
+// creates destination parent directories if needed, and calculates
+// any quota delta resulting from destination replacement.
+func RenamePath(userDir, oldPath, newPath string) (int64, error) {
+	if unescaped, err := url.PathUnescape(oldPath); err == nil {
+		oldPath = unescaped
+	}
+	if unescaped, err := url.QueryUnescape(oldPath); err == nil {
+		oldPath = unescaped
+	}
+	if unescaped, err := url.PathUnescape(newPath); err == nil {
+		newPath = unescaped
+	}
+	if unescaped, err := url.QueryUnescape(newPath); err == nil {
+		newPath = unescaped
+	}
+
+	if strings.Contains(oldPath, "\x00") || strings.Contains(newPath, "\x00") {
+		return 0, ErrAccessDenied
+	}
+
+	normOld := strings.ReplaceAll(oldPath, "\\", "/")
+	normNew := strings.ReplaceAll(newPath, "\\", "/")
+
+	if strings.HasPrefix(normOld, "/") || filepath.IsAbs(oldPath) ||
+		strings.HasPrefix(normNew, "/") || filepath.IsAbs(newPath) {
+		return 0, ErrAccessDenied
+	}
+
+	cleanOld := filepath.Clean(normOld)
+	cleanNew := filepath.Clean(normNew)
+
+	if cleanOld == "." || cleanOld == "" || cleanNew == "." || cleanNew == "" {
+		return 0, ErrInvalidPath
+	}
+
+	oldTarget, err := ResolveSafePath(userDir, cleanOld)
+	if err != nil {
+		return 0, err
+	}
+	newTarget, err := ResolveSafePath(userDir, cleanNew)
+	if err != nil {
+		return 0, err
+	}
+
+	if oldTarget == userDir || newTarget == userDir {
+		return 0, ErrAccessDenied
+	}
+
+	// Verify old path exists
+	oldStat, err := os.Lstat(oldTarget)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, ErrPathNotFound
+		}
+		return 0, err
+	}
+
+	// If source and destination are the exact same path
+	if oldTarget == newTarget {
+		return 0, nil
+	}
+
+	// Prevent moving a directory into itself
+	if oldStat.IsDir() {
+		rel, err := filepath.Rel(oldTarget, newTarget)
+		if err == nil && (rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))) {
+			return 0, errors.New("cannot move directory into itself")
+		}
+	}
+
+	// Ensure destination parent directory exists
+	parentDir := filepath.Dir(newTarget)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return 0, err
+	}
+
+	// Quota delta: if destination already exists, its replacement frees up space
+	var delta int64
+	if destStat, err := os.Lstat(newTarget); err == nil {
+		if destStat.IsDir() {
+			return 0, os.ErrExist
+		}
+		if oldStat.IsDir() {
+			return 0, errors.New("cannot overwrite non-directory with directory")
+		}
+		destSize := GetPathSize(newTarget)
+		delta = -destSize
+	}
+
+	if err := os.Rename(oldTarget, newTarget); err != nil {
+		return 0, err
+	}
+
+	return delta, nil
+}
+
+// DownloadArchive creates and streams a zip archive containing the requested paths safely within userDir.
+func DownloadArchive(w http.ResponseWriter, r *http.Request, userDir string, requestedPaths []string) error {
+	if len(requestedPaths) == 0 {
+		return ErrPathNotFound
+	}
+
+	type resolvedItem struct {
+		targetPath string
+		zipEntry   string
+		isDir      bool
+		fi         os.FileInfo
+	}
+
+	var itemsToZip []resolvedItem
+	realUserDir, _ := filepath.EvalSymlinks(userDir)
+
+	for _, reqPath := range requestedPaths {
+		if unescaped, err := url.PathUnescape(reqPath); err == nil {
+			reqPath = unescaped
+		}
+		if unescaped, err := url.QueryUnescape(reqPath); err == nil {
+			reqPath = unescaped
+		}
+		if strings.Contains(reqPath, "\x00") {
+			return ErrAccessDenied
+		}
+
+		clean := filepath.Clean(strings.ReplaceAll(reqPath, "\\", "/"))
+		clean = strings.TrimPrefix(clean, "/")
+
+		targetPath, err := ResolveSafePath(userDir, clean)
+		if err != nil {
+			return err
+		}
+
+		fi, err := os.Stat(targetPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ErrPathNotFound
+			}
+			return err
+		}
+
+		baseName := filepath.Base(targetPath)
+		if targetPath == userDir {
+			baseName = "root"
+		}
+
+		if fi.IsDir() {
+			err = filepath.WalkDir(targetPath, func(path string, d os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if d.Type()&os.ModeSymlink != 0 {
+					evalTarget, err := filepath.EvalSymlinks(path)
+					if err != nil {
+						return nil
+					}
+					if realUserDir != "" {
+						rel, err := filepath.Rel(realUserDir, evalTarget)
+						if err != nil || strings.HasPrefix(rel, "..") {
+							return ErrAccessDenied
+						}
+					}
+				}
+
+				info, err := d.Info()
+				if err != nil {
+					return nil
+				}
+
+				subRel, err := filepath.Rel(targetPath, path)
+				if err != nil {
+					return err
+				}
+
+				var entryName string
+				if subRel == "." {
+					if !d.IsDir() {
+						entryName = baseName
+					} else {
+						return nil
+					}
+				} else {
+					entryName = filepath.ToSlash(filepath.Join(baseName, subRel))
+				}
+
+				if d.IsDir() {
+					entryName += "/"
+				}
+
+				itemsToZip = append(itemsToZip, resolvedItem{
+					targetPath: path,
+					zipEntry:   entryName,
+					isDir:      d.IsDir(),
+					fi:         info,
+				})
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		} else {
+			itemsToZip = append(itemsToZip, resolvedItem{
+				targetPath: targetPath,
+				zipEntry:   baseName,
+				isDir:      false,
+				fi:         fi,
+			})
+		}
+	}
+
+	archiveName := "archive.zip"
+	if custom := r.URL.Query().Get("filename"); custom != "" {
+		cleanCustom := filepath.Base(strings.ReplaceAll(strings.ReplaceAll(custom, "\r", ""), "\n", ""))
+		cleanCustom = strings.ReplaceAll(cleanCustom, `"`, "")
+		if cleanCustom != "" && cleanCustom != "." && cleanCustom != "/" {
+			archiveName = cleanCustom
+		}
+		if !strings.HasSuffix(strings.ToLower(archiveName), ".zip") {
+			archiveName += ".zip"
+		}
+	} else if len(requestedPaths) == 1 {
+		clean := filepath.Clean(strings.ReplaceAll(requestedPaths[0], "\\", "/"))
+		clean = strings.Trim(clean, "/")
+		if clean != "" && clean != "." {
+			archiveName = filepath.Base(clean) + ".zip"
+		}
+	}
+	archiveName = strings.ReplaceAll(archiveName, `"`, "")
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archiveName))
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	for _, item := range itemsToZip {
+		if !item.isDir {
+			file, err := os.Open(item.targetPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue // file deleted concurrently; skip entry cleanly
+				}
+				return err
+			}
+
+			fi := item.fi
+			if freshFi, err := file.Stat(); err == nil {
+				fi = freshFi
+			}
+
+			header, err := zip.FileInfoHeader(fi)
+			if err != nil {
+				file.Close()
+				return err
+			}
+			header.Name = item.zipEntry
+			header.Method = zip.Deflate
+
+			entryWriter, err := zw.CreateHeader(header)
+			if err != nil {
+				file.Close()
+				return err
+			}
+
+			_, copyErr := io.Copy(entryWriter, file)
+			file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+		} else {
+			header, err := zip.FileInfoHeader(item.fi)
+			if err != nil {
+				return err
+			}
+			header.Name = item.zipEntry
+			if !strings.HasSuffix(header.Name, "/") {
+				header.Name += "/"
+			}
+			header.Method = zip.Store
+
+			if _, err := zw.CreateHeader(header); err != nil {
+				return err
+			}
+		}
+
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	return zw.Close()
 }
 
 func DeletePath(userDir, requestedPath string) error {

@@ -91,6 +91,9 @@ func main() {
 	mux.HandleFunc("/api/files", apiServer.HandleFiles)
 	mux.HandleFunc("/api/files/download", apiServer.HandleFileDownload)
 	mux.HandleFunc("/api/files/upload", apiServer.HandleFileUpload)
+	mux.HandleFunc("/api/files/folder", apiServer.HandleCreateFolder)
+	mux.HandleFunc("/api/files/rename", apiServer.HandleRenamePath)
+	mux.HandleFunc("/api/files/archive", apiServer.HandleArchiveDownload)
 
 	// Auth routes
 	mux.HandleFunc("/auth/login", apiServer.HandleLogin)

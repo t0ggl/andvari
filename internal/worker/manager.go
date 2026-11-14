@@ -313,6 +313,76 @@ func (m *Manager) ServeFileDownload(username, userDir string, w http.ResponseWri
 	return nil
 }
 
+func (m *Manager) ServeArchiveDownload(username, userDir string, w http.ResponseWriter, r *http.Request) error {
+	worker, err := m.GetWorker(username, userDir)
+	if err != nil {
+		return err
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = "http"
+			req.URL.Host = "unix"
+			req.URL.Path = "/_worker/files/archive"
+			req.Header.Set("X-Andvari-User", username)
+		},
+		Transport: worker.Transport,
+	}
+
+	proxy.ServeHTTP(w, r)
+	return nil
+}
+
+func (m *Manager) ServeFilesCreateFolder(username, userDir string, w http.ResponseWriter, r *http.Request) error {
+	worker, err := m.GetWorker(username, userDir)
+	if err != nil {
+		return err
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = "http"
+			req.URL.Host = "unix"
+			req.URL.Path = "/_worker/files/folder"
+			req.Header.Set("X-Andvari-User", username)
+		},
+		Transport: worker.Transport,
+	}
+
+	proxy.ServeHTTP(w, r)
+	return nil
+}
+
+func (m *Manager) ServeFilesRename(username, userDir string, w http.ResponseWriter, r *http.Request) (int64, error) {
+	worker, err := m.GetWorker(username, userDir)
+	if err != nil {
+		return 0, err
+	}
+
+	var delta int64
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = "http"
+			req.URL.Host = "unix"
+			req.URL.Path = "/_worker/files/rename"
+			req.Header.Set("X-Andvari-User", username)
+		},
+		Transport: worker.Transport,
+		ModifyResponse: func(resp *http.Response) error {
+			if deltaStr := resp.Header.Get("X-Andvari-Usage-Delta"); deltaStr != "" {
+				if d, err := strconv.ParseInt(deltaStr, 10, 64); err == nil {
+					delta = d
+				}
+				resp.Header.Del("X-Andvari-Usage-Delta")
+			}
+			return nil
+		},
+	}
+
+	proxy.ServeHTTP(w, r)
+	return delta, nil
+}
+
 func (m *Manager) ServeFilesUpload(username, userDir string, w http.ResponseWriter, r *http.Request, quotaLimit, usedBytes int64) (int64, error) {
 	worker, err := m.GetWorker(username, userDir)
 	if err != nil {
