@@ -14,10 +14,16 @@ import (
 	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
+	"github.com/t0ggl/andvari/internal/explorer"
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/warden"
+	"github.com/t0ggl/andvari/internal/worker"
 )
 
-func setupTestAPI(t *testing.T) (*API, *store.Store, *auth.SessionManager, string) {
+type ExplorerResult = explorer.ExplorerResult
+type UploadResult = explorer.UploadResult
+
+func setupTestAPI(t *testing.T) (*API, *warden.Server, *store.Store, *auth.SessionManager, string) {
 	tmpDir, err := os.MkdirTemp("", "andvari-api-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -25,6 +31,7 @@ func setupTestAPI(t *testing.T) (*API, *store.Store, *auth.SessionManager, strin
 
 	configDir := filepath.Join(tmpDir, "config")
 	storageDir := filepath.Join(tmpDir, "data")
+	workerDir := filepath.Join(tmpDir, "workers")
 
 	s, err := store.NewStore(configDir, storageDir)
 	if err != nil {
@@ -37,21 +44,32 @@ func setupTestAPI(t *testing.T) (*API, *store.Store, *auth.SessionManager, strin
 		t.Fatalf("NewOIDCClient failed: %v", err)
 	}
 
-	return NewAPI(s, sm, oidc), s, sm, tmpDir
+	wm := worker.NewManager(workerDir, 5*time.Minute)
+	sockPath := filepath.Join(workerDir, "warden.sock")
+	ws, err := warden.NewServer(s, sm, oidc, wm, sockPath)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	client := warden.NewClient(ws.SocketPath())
+	return NewAPI(client, oidc), ws, s, sm, tmpDir
 }
 
 func addSessionCookie(t *testing.T, req *http.Request, sm *auth.SessionManager, session *auth.SessionData) {
-	rec := httptest.NewRecorder()
-	if err := sm.SaveSession(rec, req, session); err != nil {
-		t.Fatalf("failed to save test session: %v", err)
+	val, err := sm.EncodeCookieValue(session)
+	if err != nil {
+		t.Fatalf("failed to encode cookie: %v", err)
 	}
-	cookie := rec.Result().Cookies()[0]
-	req.AddCookie(cookie)
+	req.AddCookie(&http.Cookie{
+		Name:  auth.SessionCookieName,
+		Value: val,
+	})
 }
 
 func TestAPITokenLifecycleAndLimits(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, initialToken, err := s.EnsureUserProvisioned("charlie")
 	if err != nil {
@@ -147,8 +165,9 @@ func TestAPITokenLifecycleAndLimits(t *testing.T) {
 }
 
 func TestAdminImpersonation(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, _ = s.EnsureUserProvisioned("admin_user")
 	_, _, _ = s.EnsureUserProvisioned("target_user")
@@ -208,8 +227,9 @@ func TestAdminImpersonation(t *testing.T) {
 }
 
 func TestFileExplorerOperations(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, _ = s.EnsureUserProvisioned("david")
 	userDir, _ := s.UserStoragePath("david")
@@ -317,8 +337,9 @@ func TestFileExplorerOperations(t *testing.T) {
 }
 
 func TestFileUploadAndQuotas(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	s.SetDefaultQuota(500)
 	_, _, _ = s.EnsureUserProvisioned("uploader")
@@ -411,8 +432,9 @@ func TestFileUploadAndQuotas(t *testing.T) {
 }
 
 func TestAPIQuotas(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	s.SetDefaultQuota(2048)
 
@@ -480,8 +502,9 @@ func TestAPIQuotas(t *testing.T) {
 }
 
 func TestAPITokenRename(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	user, _, err := s.EnsureUserProvisioned("emily")
 	if err != nil {
@@ -587,8 +610,9 @@ func TestAPITokenRename(t *testing.T) {
 }
 
 func TestAPIHealth(t *testing.T) {
-	api, s, _, tmpDir := setupTestAPI(t)
+	api, ws, s, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	configDir := s.ConfigDir()
 	storageDir := s.StorageDir()
@@ -695,11 +719,11 @@ func TestAPIHealth(t *testing.T) {
 		t.Errorf("expected unhealthy response with error message, got: %+v", unwritableStorage)
 	}
 
-	// 7. Nil store -> 503 Service Unavailable
-	nilAPI := NewAPI(nil, nil, nil)
+	// 7. Disconnected warden -> 503 Service Unavailable
+	downAPI := NewAPI(warden.NewClient("/tmp/nonexistent-warden.sock"), nil)
 	rec = httptest.NewRecorder()
-	nilAPI.HandleHealth(rec, req)
+	downAPI.HandleHealth(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 for nil store, got %d", rec.Code)
+		t.Fatalf("expected 503 for disconnected warden, got %d", rec.Code)
 	}
 }

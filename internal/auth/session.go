@@ -8,7 +8,7 @@ import (
 	"github.com/gorilla/securecookie"
 )
 
-const sessionCookieName = "andvari_session"
+const SessionCookieName = "andvari_session"
 
 type SessionData struct {
 	Username         string   `json:"username"`
@@ -32,18 +32,27 @@ func NewSessionManager(secret []byte) *SessionManager {
 	return &SessionManager{sc: sc}
 }
 
+func (sm *SessionManager) DecodeCookieValue(val string) (*SessionData, error) {
+	var data SessionData
+	if err := sm.sc.Decode(SessionCookieName, val, &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (sm *SessionManager) EncodeCookieValue(data *SessionData) (string, error) {
+	if data.CreatedAt == 0 {
+		data.CreatedAt = time.Now().Unix()
+	}
+	return sm.sc.Encode(SessionCookieName, data)
+}
+
 func (sm *SessionManager) GetSession(r *http.Request) (*SessionData, error) {
-	cookie, err := r.Cookie(sessionCookieName)
+	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil {
 		return nil, err
 	}
-
-	var data SessionData
-	if err := sm.sc.Decode(sessionCookieName, cookie.Value, &data); err != nil {
-		return nil, err
-	}
-
-	return &data, nil
+	return sm.DecodeCookieValue(cookie.Value)
 }
 
 func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, data *SessionData) error {
@@ -51,7 +60,7 @@ func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, da
 		data.CreatedAt = time.Now().Unix()
 	}
 
-	encoded, err := sm.sc.Encode(sessionCookieName, data)
+	encoded, err := sm.sc.Encode(SessionCookieName, data)
 	if err != nil {
 		return err
 	}
@@ -59,7 +68,7 @@ func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, da
 	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     SessionCookieName,
 		Value:    encoded,
 		Path:     "/",
 		HttpOnly: true,
@@ -73,7 +82,7 @@ func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, da
 
 func (sm *SessionManager) ClearSession(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,

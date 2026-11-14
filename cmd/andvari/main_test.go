@@ -13,6 +13,7 @@ import (
 	"github.com/t0ggl/andvari/internal/api"
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/warden"
 	"github.com/t0ggl/andvari/internal/worker"
 )
 
@@ -25,6 +26,7 @@ func TestHealthCheckEndpoints(t *testing.T) {
 
 	configDir := filepath.Join(tmpDir, "config")
 	storageDir := filepath.Join(tmpDir, "data")
+	workerDir := filepath.Join(tmpDir, "workers")
 
 	userStore, err := store.NewStore(configDir, storageDir, 0)
 	if err != nil {
@@ -40,10 +42,18 @@ func TestHealthCheckEndpoints(t *testing.T) {
 		t.Fatalf("failed to initialize OIDC client: %v", err)
 	}
 
-	workerManager := worker.NewManager(filepath.Join(tmpDir, "workers"), 5*time.Minute)
+	workerManager := worker.NewManager(workerDir, 5*time.Minute)
 	defer workerManager.Close()
 
-	apiServer := api.NewAPI(userStore, sessionManager, oidcClient, workerManager)
+	sockPath := filepath.Join(workerDir, "warden.sock")
+	wardenServer, err := warden.NewServer(userStore, sessionManager, oidcClient, workerManager, sockPath)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	defer wardenServer.Close()
+
+	wardenClient := warden.NewClient(wardenServer.SocketPath())
+	apiServer := api.NewAPI(wardenClient, oidcClient)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", apiServer.HandleHealth)

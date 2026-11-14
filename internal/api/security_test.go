@@ -11,19 +11,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/warden"
 	"github.com/t0ggl/andvari/internal/webdav"
-	"github.com/t0ggl/andvari/internal/worker"
 )
 
 // TestPathTraversalSecurity verifies that all forms of directory traversal attacks
 // across API file listing, downloading, and deletion are safely rejected with 403 Forbidden.
 func TestPathTraversalSecurity(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, err := s.EnsureUserProvisioned("victim")
 	if err != nil {
@@ -148,8 +148,9 @@ func TestPathTraversalSecurity(t *testing.T) {
 // directory pointing outside (e.g. to /etc or the application config directory) cannot
 // be abused to read or list external files.
 func TestSymlinkEscapeSecurity(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, _ = s.EnsureUserProvisioned("attacker")
 	userDir, err := s.UserStoragePath("attacker")
@@ -202,8 +203,9 @@ func TestSymlinkEscapeSecurity(t *testing.T) {
 // TestRootDirectoryDeletionProtection ensures a user cannot delete their own root directory,
 // protecting against storage destruction.
 func TestRootDirectoryDeletionProtection(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, _ = s.EnsureUserProvisioned("user1")
 	userDir, _ := s.UserStoragePath("user1")
@@ -234,8 +236,9 @@ func TestRootDirectoryDeletionProtection(t *testing.T) {
 
 // TestCrossUserIsolation verifies that User A cannot read or access User B's files.
 func TestCrossUserIsolation(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, _, _ = s.EnsureUserProvisioned("alice")
 	_, _, _ = s.EnsureUserProvisioned("bob")
@@ -253,7 +256,7 @@ func TestCrossUserIsolation(t *testing.T) {
 
 	// Alice attempts to access Bob's private file
 	req := httptest.NewRequest("GET", "/api/files/download?path=../bob/bob_private.txt", nil)
-	addSessionCookie(t, req, sm, sessionToCookie(aliceSession))
+	addSessionCookie(t, req, sm, aliceSession)
 	rec := httptest.NewRecorder()
 	api.HandleFileDownload(rec, req)
 
@@ -265,15 +268,12 @@ func TestCrossUserIsolation(t *testing.T) {
 	}
 }
 
-func sessionToCookie(s *auth.SessionData) *auth.SessionData {
-	return s
-}
-
 // TestUsernamePathTraversalValidation checks that malicious usernames are rejected immediately
 // by the storage layer to prevent writing config or data files outside intended directories.
 func TestUsernamePathTraversalValidation(t *testing.T) {
-	_, s, _, tmpDir := setupTestAPI(t)
+	_, ws, s, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	badUsernames := []string{
 		"../admin",
@@ -310,8 +310,9 @@ func TestUsernamePathTraversalValidation(t *testing.T) {
 // TestSessionTamperingAndForging checks that forged, tampered, or expired session cookies
 // fail authentication cleanly without panicking.
 func TestSessionTamperingAndForging(t *testing.T) {
-	api, _, _, tmpDir := setupTestAPI(t)
+	api, ws, _, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	// 1. Missing cookie -> 401
 	req := httptest.NewRequest("GET", "/api/me", nil)
@@ -335,16 +336,19 @@ func TestSessionTamperingAndForging(t *testing.T) {
 
 	// 3. Forged cookie created with different secret key
 	foreignSM := auth.NewSessionManager([]byte("different-secret-key-attacker-32!"))
-	foreignRec := httptest.NewRecorder()
-	foreignReq := httptest.NewRequest("GET", "/", nil)
-	_ = foreignSM.SaveSession(foreignRec, foreignReq, &auth.SessionData{
+	val, err := foreignSM.EncodeCookieValue(&auth.SessionData{
 		Username: "admin",
 		Groups:   []string{"admin"},
 	})
-	forgedCookie := foreignRec.Result().Cookies()[0]
+	if err != nil {
+		t.Fatalf("failed to encode forged cookie: %v", err)
+	}
 
 	req = httptest.NewRequest("GET", "/api/me", nil)
-	req.AddCookie(forgedCookie)
+	req.AddCookie(&http.Cookie{
+		Name:  "andvari_session",
+		Value: val,
+	})
 	rec = httptest.NewRecorder()
 	api.HandleMe(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -355,8 +359,9 @@ func TestSessionTamperingAndForging(t *testing.T) {
 // TestOAuthCSRFProtection verifies that OIDC callback strictly validates state parameters
 // to prevent CSRF authentication hijacking.
 func TestOAuthCSRFProtection(t *testing.T) {
-	api, _, _, tmpDir := setupTestAPI(t)
+	api, ws, _, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	// 1. Missing state cookie -> 400
 	req := httptest.NewRequest("GET", "/auth/callback?state=xyz&code=abc", nil)
@@ -393,8 +398,9 @@ func TestOAuthCSRFProtection(t *testing.T) {
 
 // TestWebDAVSecurity verifies that WebDAV enforces authentication and isolates storage.
 func TestWebDAVSecurity(t *testing.T) {
-	_, s, _, tmpDir := setupTestAPI(t)
+	_, ws, s, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
 	_, tokenAlice, _ := s.EnsureUserProvisioned("alice")
 	_, _, _ = s.EnsureUserProvisioned("bob")
@@ -403,7 +409,7 @@ func TestWebDAVSecurity(t *testing.T) {
 	bobDir, _ := s.UserStoragePath("bob")
 	_ = os.WriteFile(filepath.Join(bobDir, "bob_private.txt"), []byte("BOB_SECRET"), 0644)
 
-	server := webdav.NewServer(s)
+	server := webdav.NewServer(warden.NewClient(ws.SocketPath()))
 
 	// 1. WebDAV unauthenticated request -> 401
 	req := httptest.NewRequest("GET", "/webdav/bob_private.txt", nil)
@@ -428,7 +434,6 @@ func TestWebDAVSecurity(t *testing.T) {
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
-	// golang.org/x/net/webdav confines Dir(userDir) so traversal yields 404 or 400, never 200 with Bob's content
 	if strings.Contains(rec.Body.String(), "BOB_SECRET") {
 		t.Fatalf("CRITICAL SECURITY LEAK: Alice accessed Bob's file via WebDAV path traversal!")
 	}
@@ -437,13 +442,9 @@ func TestWebDAVSecurity(t *testing.T) {
 // TestWorkerImpersonationIsolation verifies that file explorer operations with admin
 // impersonation route to the impersonated user's Landlocked worker process.
 func TestWorkerImpersonationIsolation(t *testing.T) {
-	api, s, sm, tmpDir := setupTestAPI(t)
+	api, ws, s, sm, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
-
-	wm := worker.NewManager(filepath.Join(tmpDir, "workers"), 1*time.Minute)
-	defer wm.Close()
-
-	apiWithWorker := NewAPI(s, sm, api.oidcClient, wm)
+	defer ws.Close()
 
 	_, _, err := s.EnsureUserProvisioned("adminuser")
 	if err != nil {
@@ -474,7 +475,7 @@ func TestWorkerImpersonationIsolation(t *testing.T) {
 	listReq := httptest.NewRequest("GET", "/api/files", nil)
 	addSessionCookie(t, listReq, sm, session)
 	listRec := httptest.NewRecorder()
-	apiWithWorker.HandleFiles(listRec, listReq)
+	api.HandleFiles(listRec, listReq)
 
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for impersonated list, got %d (body: %s)", listRec.Code, listRec.Body.String())
@@ -490,7 +491,7 @@ func TestWorkerImpersonationIsolation(t *testing.T) {
 	downReq := httptest.NewRequest("GET", "/api/files/download?path=bob_file.txt", nil)
 	addSessionCookie(t, downReq, sm, session)
 	downRec := httptest.NewRecorder()
-	apiWithWorker.HandleFileDownload(downRec, downReq)
+	api.HandleFileDownload(downRec, downReq)
 
 	if downRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for download, got %d", downRec.Code)
@@ -504,7 +505,7 @@ func TestWorkerImpersonationIsolation(t *testing.T) {
 	adminListReq := httptest.NewRequest("GET", "/api/files", nil)
 	addSessionCookie(t, adminListReq, sm, session)
 	adminListRec := httptest.NewRecorder()
-	apiWithWorker.HandleFiles(adminListRec, adminListReq)
+	api.HandleFiles(adminListRec, adminListReq)
 
 	if adminListRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for admin own list, got %d", adminListRec.Code)
@@ -516,13 +517,11 @@ func TestWorkerImpersonationIsolation(t *testing.T) {
 
 // TestWebDAVWithWorkerServer verifies WebDAV requests through the worker manager.
 func TestWebDAVWithWorkerServer(t *testing.T) {
-	_, s, _, tmpDir := setupTestAPI(t)
+	_, ws, s, _, tmpDir := setupTestAPI(t)
 	defer os.RemoveAll(tmpDir)
+	defer ws.Close()
 
-	wm := worker.NewManager(filepath.Join(tmpDir, "workers"), 1*time.Minute)
-	defer wm.Close()
-
-	server := webdav.NewServer(s, wm)
+	server := webdav.NewServer(warden.NewClient(ws.SocketPath()))
 
 	_, tokenAlice, _ := s.EnsureUserProvisioned("alice")
 	aliceDir, _ := s.UserStoragePath("alice")
