@@ -91,3 +91,25 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-and-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }}" \
+              --generate-notes \
+              --verify-tag
