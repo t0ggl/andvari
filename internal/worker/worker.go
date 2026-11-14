@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -155,6 +156,38 @@ func RunWorkerCLI(args []string) {
 
 		quotaLimit, _ := strconv.ParseInt(r.Header.Get("X-Andvari-Quota-Limit"), 10, 64)
 		usedBytes, _ := strconv.ParseInt(r.Header.Get("X-Andvari-Quota-Used"), 10, 64)
+
+		if r.Method == "PROPFIND" {
+			var bodyBytes []byte
+			if r.Body != nil {
+				bodyBytes, _ = io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			}
+			wantAvailable, wantUsed := ParsePropfindRequest(bodyBytes)
+			if wantAvailable || wantUsed {
+				rec := NewResponseBuffer()
+				davHandler.ServeHTTP(rec, r)
+				if rec.StatusCode == 0 {
+					rec.StatusCode = http.StatusOK
+				}
+				if rec.StatusCode == http.StatusMultiStatus {
+					modXML, err := InjectQuotaProperties(rec.Body.Bytes(), quotaLimit, usedBytes, wantAvailable, wantUsed)
+					if err == nil {
+						rec.Body.Reset()
+						rec.Body.Write(modXML)
+						rec.HeaderMap.Set("Content-Length", strconv.Itoa(len(modXML)))
+					}
+				}
+				for k, vv := range rec.HeaderMap {
+					for _, v := range vv {
+						w.Header().Add(k, v)
+					}
+				}
+				w.WriteHeader(rec.StatusCode)
+				_, _ = w.Write(rec.Body.Bytes())
+				return
+			}
+		}
 
 		targetRel := strings.TrimPrefix(r.URL.Path, "/webdav")
 		targetPath := filepath.Join(*userDir, filepath.Clean("/"+targetRel))

@@ -1,12 +1,14 @@
 package webdav
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/t0ggl/andvari/internal/store"
@@ -218,6 +220,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[webdav] %s %s (user: %s): %v", req.Method, req.URL.Path, username, err)
 			}
 		},
+	}
+
+	if r.Method == "PROPFIND" {
+		var bodyBytes []byte
+		if r.Body != nil {
+			bodyBytes, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+		wantAvailable, wantUsed := worker.ParsePropfindRequest(bodyBytes)
+		if wantAvailable || wantUsed {
+			rec := worker.NewResponseBuffer()
+			handler.ServeHTTP(rec, r)
+			if rec.StatusCode == 0 {
+				rec.StatusCode = http.StatusOK
+			}
+			if rec.StatusCode == http.StatusMultiStatus {
+				modXML, err := worker.InjectQuotaProperties(rec.Body.Bytes(), quotaLimit, usedBytes, wantAvailable, wantUsed)
+				if err == nil {
+					rec.Body.Reset()
+					rec.Body.Write(modXML)
+					rec.HeaderMap.Set("Content-Length", strconv.Itoa(len(modXML)))
+				}
+			}
+			for k, vv := range rec.HeaderMap {
+				for _, v := range vv {
+					w.Header().Add(k, v)
+				}
+			}
+			w.WriteHeader(rec.StatusCode)
+			_, _ = w.Write(rec.Body.Bytes())
+			return
+		}
 	}
 
 	handler.ServeHTTP(w, r)

@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/t0ggl/andvari/internal/store"
+	"github.com/t0ggl/andvari/internal/worker"
 )
 
 func TestWebDAVHandler(t *testing.T) {
@@ -163,3 +166,144 @@ func TestWebDAVQuotaEnforcement(t *testing.T) {
 		t.Fatalf("expected 201/204 for unlimited user, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestWebDAVPropfindQuota(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "andvari-webdav-propfind-quota-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Set 500 byte quota limit
+	s, err := store.NewStore(tmpDir+"/config", tmpDir+"/data", 500)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	workerDir := tmpDir + "/workers"
+	wm := worker.NewManager(workerDir, 1*time.Minute)
+	defer wm.Close()
+
+	// Test both standalone WebDAV server (wm == nil) and worker-backed WebDAV server
+	servers := []struct {
+		name   string
+		server *Server
+	}{
+		{name: "standalone", server: NewServer(s)},
+		{name: "worker", server: NewServer(s, wm)},
+	}
+
+	for _, tc := range servers {
+		t.Run(tc.name, func(t *testing.T) {
+			propUser := tc.name + "_propuser"
+			_, token, err := s.EnsureUserProvisioned(propUser)
+			if err != nil {
+				t.Fatalf("EnsureUserProvisioned failed: %v", err)
+			}
+			authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(propUser+":"+token))
+
+			// 1. Upload 200 bytes
+			data200 := make([]byte, 200)
+			putReq := httptest.NewRequest("PUT", "/webdav/data.bin", strings.NewReader(string(data200)))
+			putReq.Header.Set("Authorization", authHeader)
+			putReq.ContentLength = 200
+			putRec := httptest.NewRecorder()
+			tc.server.ServeHTTP(putRec, putReq)
+			if putRec.Code != http.StatusCreated && putRec.Code != http.StatusNoContent {
+				t.Fatalf("PUT data failed: code %d, body %s", putRec.Code, putRec.Body.String())
+			}
+
+			// 2. PROPFIND with empty body (RFC 4918 allprop)
+			propReq := httptest.NewRequest("PROPFIND", "/webdav/", nil)
+			propReq.Header.Set("Authorization", authHeader)
+			propReq.Header.Set("Depth", "0")
+			propRec := httptest.NewRecorder()
+			tc.server.ServeHTTP(propRec, propReq)
+
+			if propRec.Code != http.StatusMultiStatus {
+				t.Fatalf("expected 207 MultiStatus, got %d (body: %s)", propRec.Code, propRec.Body.String())
+			}
+			body := propRec.Body.String()
+			if !strings.Contains(body, "<D:quota-used-bytes>200</D:quota-used-bytes>") {
+				t.Errorf("expected <D:quota-used-bytes>200</D:quota-used-bytes>, got: %s", body)
+			}
+			if !strings.Contains(body, "<D:quota-available-bytes>300</D:quota-available-bytes>") {
+				t.Errorf("expected <D:quota-available-bytes>300</D:quota-available-bytes>, got: %s", body)
+			}
+			if !strings.Contains(body, "<D:status>HTTP/1.1 200 OK</D:status>") {
+				t.Errorf("expected 200 OK status in propstat, got: %s", body)
+			}
+
+			// 3. PROPFIND requesting only quota properties
+			specificBody := `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:quota-available-bytes/>
+    <D:quota-used-bytes/>
+  </D:prop>
+</D:propfind>`
+			specReq := httptest.NewRequest("PROPFIND", "/webdav/", strings.NewReader(specificBody))
+			specReq.Header.Set("Authorization", authHeader)
+			specReq.Header.Set("Depth", "0")
+			specRec := httptest.NewRecorder()
+			tc.server.ServeHTTP(specRec, specReq)
+
+			if specRec.Code != http.StatusMultiStatus {
+				t.Fatalf("expected 207 MultiStatus, got %d (body: %s)", specRec.Code, specRec.Body.String())
+			}
+			specBody := specRec.Body.String()
+			if !strings.Contains(specBody, "<D:quota-used-bytes>200</D:quota-used-bytes>") {
+				t.Errorf("expected <D:quota-used-bytes>200</D:quota-used-bytes>, got: %s", specBody)
+			}
+			if !strings.Contains(specBody, "<D:quota-available-bytes>300</D:quota-available-bytes>") {
+				t.Errorf("expected <D:quota-available-bytes>300</D:quota-available-bytes>, got: %s", specBody)
+			}
+			if strings.Contains(specBody, "404 Not Found") {
+				t.Errorf("did not expect 404 Not Found in propstat, got: %s", specBody)
+			}
+
+			// 4. Unlimited quota user
+			unlimUser := tc.name + "_unlimuser"
+			_, unlimToken, err := s.EnsureUserProvisioned(unlimUser)
+			if err != nil {
+				t.Fatalf("EnsureUserProvisioned failed: %v", err)
+			}
+			zero := int64(0)
+			if err := s.SetUserQuota(unlimUser, &zero); err != nil {
+				t.Fatalf("SetUserQuota failed: %v", err)
+			}
+			unlimAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(unlimUser+":"+unlimToken))
+
+			// Upload 150 bytes for unlimited user
+			data150 := make([]byte, 150)
+			uPutReq := httptest.NewRequest("PUT", "/webdav/unlim.bin", strings.NewReader(string(data150)))
+			uPutReq.Header.Set("Authorization", unlimAuth)
+			uPutReq.ContentLength = 150
+			uPutRec := httptest.NewRecorder()
+			tc.server.ServeHTTP(uPutRec, uPutReq)
+			if uPutRec.Code != http.StatusCreated && uPutRec.Code != http.StatusNoContent {
+				t.Fatalf("unlimited PUT failed: code %d, body %s", uPutRec.Code, uPutRec.Body.String())
+			}
+
+			// PROPFIND on unlimited user
+			uPropReq := httptest.NewRequest("PROPFIND", "/webdav/", nil)
+			uPropReq.Header.Set("Authorization", unlimAuth)
+			uPropReq.Header.Set("Depth", "0")
+			uPropRec := httptest.NewRecorder()
+			tc.server.ServeHTTP(uPropRec, uPropReq)
+
+			if uPropRec.Code != http.StatusMultiStatus {
+				t.Fatalf("expected 207 MultiStatus for unlimited user, got %d", uPropRec.Code)
+			}
+			uBody := uPropRec.Body.String()
+			expectedAvail := strconv.FormatInt(worker.UnlimitedQuotaCeiling-150, 10)
+			if !strings.Contains(uBody, "<D:quota-available-bytes>"+expectedAvail+"</D:quota-available-bytes>") {
+				t.Errorf("expected <D:quota-available-bytes>%s</D:quota-available-bytes>, got: %s", expectedAvail, uBody)
+			}
+			if !strings.Contains(uBody, "<D:quota-used-bytes>150</D:quota-used-bytes>") {
+				t.Errorf("expected <D:quota-used-bytes>150</D:quota-used-bytes>, got: %s", uBody)
+			}
+		})
+	}
+}
+

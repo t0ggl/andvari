@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,113 @@ func TestWorkerWebDAVAndQuota(t *testing.T) {
 	}
 	if delDelta != -21 {
 		t.Errorf("expected delta=-21, got %d", delDelta)
+	}
+}
+
+func TestWorkerWebDAVPropfindQuota(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "andvari-worker-propfind-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	userDir := filepath.Join(tmpDir, "users", "carol")
+	workerDir := filepath.Join(tmpDir, "workers")
+	_ = os.MkdirAll(userDir, 0700)
+
+	mgr := NewManager(workerDir, 1*time.Minute)
+	defer mgr.Close()
+
+	// 1. Limited quota with allprop (empty body)
+	req := httptest.NewRequest("PROPFIND", "/webdav/", nil)
+	req.Header.Set("Depth", "0")
+	rec := httptest.NewRecorder()
+
+	_, err = mgr.ServeWebDAV("carol", userDir, rec, req, 1000, 250)
+	if err != nil {
+		t.Fatalf("ServeWebDAV PROPFIND failed: %v", err)
+	}
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207 MultiStatus, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<D:quota-available-bytes>750</D:quota-available-bytes>") {
+		t.Errorf("expected <D:quota-available-bytes>750</D:quota-available-bytes>, got: %s", body)
+	}
+	if !strings.Contains(body, "<D:quota-used-bytes>250</D:quota-used-bytes>") {
+		t.Errorf("expected <D:quota-used-bytes>250</D:quota-used-bytes>, got: %s", body)
+	}
+
+	// 2. Limited quota with explicit quota properties
+	specBody := `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:quota-available-bytes/>
+    <D:quota-used-bytes/>
+  </D:prop>
+</D:propfind>`
+	req = httptest.NewRequest("PROPFIND", "/webdav/", strings.NewReader(specBody))
+	req.Header.Set("Depth", "0")
+	rec = httptest.NewRecorder()
+
+	_, err = mgr.ServeWebDAV("carol", userDir, rec, req, 1000, 250)
+	if err != nil {
+		t.Fatalf("ServeWebDAV PROPFIND explicit failed: %v", err)
+	}
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207 MultiStatus, got %d", rec.Code)
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "<D:quota-available-bytes>750</D:quota-available-bytes>") {
+		t.Errorf("expected <D:quota-available-bytes>750</D:quota-available-bytes>, got: %s", body)
+	}
+	if !strings.Contains(body, "<D:quota-used-bytes>250</D:quota-used-bytes>") {
+		t.Errorf("expected <D:quota-used-bytes>250</D:quota-used-bytes>, got: %s", body)
+	}
+	if strings.Contains(body, "404 Not Found") {
+		t.Errorf("did not expect 404 Not Found in propstat, got: %s", body)
+	}
+
+	// 3. Unlimited quota (limit = 0)
+	req = httptest.NewRequest("PROPFIND", "/webdav/", nil)
+	req.Header.Set("Depth", "0")
+	rec = httptest.NewRecorder()
+
+	_, err = mgr.ServeWebDAV("carol", userDir, rec, req, 0, 350)
+	if err != nil {
+		t.Fatalf("ServeWebDAV PROPFIND unlimited failed: %v", err)
+	}
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207 MultiStatus, got %d", rec.Code)
+	}
+	body = rec.Body.String()
+	expectedAvail := strconv.FormatInt(UnlimitedQuotaCeiling-350, 10)
+	if !strings.Contains(body, "<D:quota-available-bytes>"+expectedAvail+"</D:quota-available-bytes>") {
+		t.Errorf("expected <D:quota-available-bytes>%s</D:quota-available-bytes>, got: %s", expectedAvail, body)
+	}
+	if !strings.Contains(body, "<D:quota-used-bytes>350</D:quota-used-bytes>") {
+		t.Errorf("expected <D:quota-used-bytes>350</D:quota-used-bytes>, got: %s", body)
+	}
+
+	// 4. Propname request: should not inject quota values
+	propnameBody := `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:propname/>
+</D:propfind>`
+	req = httptest.NewRequest("PROPFIND", "/webdav/", strings.NewReader(propnameBody))
+	req.Header.Set("Depth", "0")
+	rec = httptest.NewRecorder()
+
+	_, err = mgr.ServeWebDAV("carol", userDir, rec, req, 1000, 250)
+	if err != nil {
+		t.Fatalf("ServeWebDAV PROPFIND propname failed: %v", err)
+	}
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207 MultiStatus, got %d", rec.Code)
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, "<D:quota-available-bytes>750") {
+		t.Errorf("propname request should not have injected quota values, got: %s", body)
 	}
 }
 
