@@ -34,7 +34,7 @@ jobs:
 
       - name: Run Semgrep SAST
         shell: bash
-        run: ./scripts/sast.sh
+        run: make sast
 
   test:
     name: Run Tests
@@ -52,9 +52,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Build Frontend
-        run: |
-          npm --prefix web ci
-          npm --prefix web run build
+        run: make build-frontend
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -63,7 +61,7 @@ jobs:
           cache: true
 
       - name: Run Backend Tests
-        run: go test -v -cover ./...
+        run: make test-backend
 
   build-and-push:
     name: Build & Push Container Image
