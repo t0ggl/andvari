@@ -79,7 +79,7 @@ docker run -d \
   -e OIDC_REDIRECT_URL="https://andvari.example.com/auth/callback" \
   -e OIDC_ADMIN_GROUP="admin" \
   -e DEFAULT_QUOTA="10GB" \
-  ghcr.io/t0ggl/andvari:latest
+  ghcr.io/t0ggl/andvari:0.9.0
 ```
 
 ### Environment Variables
