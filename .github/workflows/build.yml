@@ -16,8 +16,29 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+
+      - name: Install Semgrep
+        shell: bash
+        run: python -m pip install --no-cache-dir semgrep
+
+      - name: Run Semgrep SAST
+        shell: bash
+        run: ./scripts/sast.sh
+
   test:
     name: Run Tests
+    needs: sast
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

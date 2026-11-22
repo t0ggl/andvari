@@ -67,6 +67,7 @@ func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, da
 
 	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    encoded,
@@ -81,11 +82,13 @@ func (sm *SessionManager) SaveSession(w http.ResponseWriter, r *http.Request, da
 }
 
 func (sm *SessionManager) ClearSession(w http.ResponseWriter) {
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- clearing session cookie across HTTP and HTTPS deployments
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 }
