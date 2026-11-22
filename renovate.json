@@ -10,6 +10,12 @@
   "platformAutomerge": true,
   "packageRules": [
     {
+      "description": "Pin Dockerfile images by digest and merge after CI passes",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true,
+      "platformAutomerge": false
+    },
+    {
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
     },
