@@ -63,6 +63,9 @@ jobs:
       - name: Run Backend Tests
         run: make test-backend
 
+      - name: Build Backend Binary
+        run: make build-backend
+
   build-and-push:
     name: Build & Push Container Image
     needs: test
