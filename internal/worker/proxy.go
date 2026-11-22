@@ -23,12 +23,12 @@ func newUnixTransport(socketPath string) *http.Transport {
 func ProxyWebDAV(socketPath, username string, w http.ResponseWriter, r *http.Request, quotaLimit, usedBytes int64) (int64, error) {
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.Header.Set("X-Andvari-User", username)
-			req.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
-			req.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.Header.Set("X-Andvari-User", username)
+			pr.Out.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
+			pr.Out.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
 		},
 		Transport: newUnixTransport(socketPath),
 		ModifyResponse: func(resp *http.Response) error {
@@ -49,11 +49,11 @@ func ProxyWebDAV(socketPath, username string, w http.ResponseWriter, r *http.Req
 func ProxyFilesListOrDelete(socketPath, username string, w http.ResponseWriter, r *http.Request) (int64, error) {
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: newUnixTransport(socketPath),
 		ModifyResponse: func(resp *http.Response) error {
@@ -73,11 +73,11 @@ func ProxyFilesListOrDelete(socketPath, username string, w http.ResponseWriter, 
 
 func ProxyFileDownload(socketPath, username string, w http.ResponseWriter, r *http.Request) error {
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/download"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/download"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: newUnixTransport(socketPath),
 	}
@@ -89,13 +89,13 @@ func ProxyFileDownload(socketPath, username string, w http.ResponseWriter, r *ht
 func ProxyFileUpload(socketPath, username string, w http.ResponseWriter, r *http.Request, quotaLimit, usedBytes int64) (int64, error) {
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/upload"
-			req.Header.Set("X-Andvari-User", username)
-			req.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
-			req.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/upload"
+			pr.Out.Header.Set("X-Andvari-User", username)
+			pr.Out.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
+			pr.Out.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
 		},
 		Transport: newUnixTransport(socketPath),
 		ModifyResponse: func(resp *http.Response) error {
@@ -115,11 +115,11 @@ func ProxyFileUpload(socketPath, username string, w http.ResponseWriter, r *http
 
 func ProxyCreateFolder(socketPath, username string, w http.ResponseWriter, r *http.Request) error {
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/folder"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/folder"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: newUnixTransport(socketPath),
 	}
@@ -130,11 +130,11 @@ func ProxyCreateFolder(socketPath, username string, w http.ResponseWriter, r *ht
 func ProxyRenamePath(socketPath, username string, w http.ResponseWriter, r *http.Request) (int64, error) {
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/rename"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/rename"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: newUnixTransport(socketPath),
 		ModifyResponse: func(resp *http.Response) error {

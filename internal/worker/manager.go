@@ -138,6 +138,7 @@ func (m *Manager) GetWorker(username, userDir string) (*WorkerInstance, error) {
 	sockPath := m.socketPathForUser(username)
 	_ = os.Remove(sockPath)
 
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- self-execution of resolved binary path with fixed internal __worker subcommand
 	cmd := exec.Command(
 		m.executable,
 		"__worker",
@@ -220,12 +221,12 @@ func (m *Manager) ServeWebDAV(username, userDir string, w http.ResponseWriter, r
 
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.Header.Set("X-Andvari-User", username)
-			req.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
-			req.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.Header.Set("X-Andvari-User", username)
+			pr.Out.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
+			pr.Out.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
 		},
 		Transport: worker.Transport,
 		ModifyResponse: func(resp *http.Response) error {
@@ -250,11 +251,11 @@ func (m *Manager) ServeFilesList(username, userDir string, w http.ResponseWriter
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 	}
@@ -271,11 +272,11 @@ func (m *Manager) ServeFilesDelete(username, userDir string, w http.ResponseWrit
 
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 		ModifyResponse: func(resp *http.Response) error {
@@ -300,11 +301,11 @@ func (m *Manager) ServeFileDownload(username, userDir string, w http.ResponseWri
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/download"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/download"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 	}
@@ -320,11 +321,11 @@ func (m *Manager) ServeArchiveDownload(username, userDir string, w http.Response
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/archive"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/archive"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 	}
@@ -340,11 +341,11 @@ func (m *Manager) ServeFilesCreateFolder(username, userDir string, w http.Respon
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/folder"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/folder"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 	}
@@ -361,11 +362,11 @@ func (m *Manager) ServeFilesRename(username, userDir string, w http.ResponseWrit
 
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/rename"
-			req.Header.Set("X-Andvari-User", username)
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/rename"
+			pr.Out.Header.Set("X-Andvari-User", username)
 		},
 		Transport: worker.Transport,
 		ModifyResponse: func(resp *http.Response) error {
@@ -391,13 +392,13 @@ func (m *Manager) ServeFilesUpload(username, userDir string, w http.ResponseWrit
 
 	var delta int64
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = "unix"
-			req.URL.Path = "/_worker/files/upload"
-			req.Header.Set("X-Andvari-User", username)
-			req.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
-			req.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "unix"
+			pr.Out.URL.Path = "/_worker/files/upload"
+			pr.Out.Header.Set("X-Andvari-User", username)
+			pr.Out.Header.Set("X-Andvari-Quota-Limit", strconv.FormatInt(quotaLimit, 10))
+			pr.Out.Header.Set("X-Andvari-Quota-Used", strconv.FormatInt(usedBytes, 10))
 		},
 		Transport: worker.Transport,
 		ModifyResponse: func(resp *http.Response) error {

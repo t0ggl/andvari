@@ -82,6 +82,7 @@ func main() {
 	}
 
 	// Spawn sandboxed Web Server subprocess
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- self-execution of resolved binary path with fixed internal subcommand
 	webCmd := exec.Command(exe, "__web", "-warden-sock", wardenServer.SocketPath())
 	webCmd.Stdout = os.Stdout
 	webCmd.Stderr = os.Stderr

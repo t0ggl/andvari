@@ -291,6 +291,7 @@ func (c *Client) AddUsageDelta(username string, delta int64) error {
 }
 
 func (c *Client) CheckHealth() error {
+	// nosemgrep: problem-based-packs.insecure-transport.go-stdlib.http-customized-request.http-customized-request -- request traverses local Unix domain socket transport, not TCP
 	req, err := http.NewRequest(http.MethodGet, "http://unix/warden/health", nil)
 	if err != nil {
 		return err

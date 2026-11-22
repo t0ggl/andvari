@@ -283,6 +283,7 @@ func (a *API) HandleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+		// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 		http.SetCookie(w, &http.Cookie{
 			Name:     auth.SessionCookieName,
 			Value:    res.SessionCookie,
@@ -307,6 +308,7 @@ func (a *API) HandleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+		// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 		http.SetCookie(w, &http.Cookie{
 			Name:     auth.SessionCookieName,
 			Value:    res.SessionCookie,
@@ -525,12 +527,15 @@ func (a *API) HandleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 // OIDC Handlers
 func (a *API) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	state := auth.GenerateState()
+	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 	http.SetCookie(w, &http.Cookie{
 		Name:     "andvari_oauth_state",
 		Value:    state,
 		Path:     "/auth/callback",
 		HttpOnly: true,
+		Secure:   isHTTPS,
 		MaxAge:   300,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -552,12 +557,18 @@ func (a *API) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
 	// Clear state cookie
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 	http.SetCookie(w, &http.Cookie{
-		Name:   "andvari_oauth_state",
-		Value:  "",
-		Path:   "/auth/callback",
-		MaxAge: -1,
+		Name:     "andvari_oauth_state",
+		Value:    "",
+		Path:     "/auth/callback",
+		HttpOnly: true,
+		Secure:   isHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
 	})
 
 	code := r.URL.Query().Get("code")
@@ -577,7 +588,7 @@ func (a *API) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to provision session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    sessionCookie,
@@ -592,6 +603,7 @@ func (a *API) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure is set dynamically from request TLS / X-Forwarded-Proto for LAN HTTP or HTTPS proxy deployments
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    "",

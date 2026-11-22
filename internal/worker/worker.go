@@ -184,6 +184,7 @@ func RunWorkerCLI(args []string) {
 					}
 				}
 				w.WriteHeader(rec.StatusCode)
+				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- WebDAV XML multistatus response body
 				_, _ = w.Write(rec.Body.Bytes())
 				return
 			}
@@ -522,6 +523,7 @@ func RunWorkerCLI(args []string) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
+		// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- raw binary test endpoint with application/octet-stream content-type
 		_, _ = w.Write(data)
 	})
 

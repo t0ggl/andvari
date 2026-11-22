@@ -16,8 +16,29 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+
+      - name: Install Semgrep
+        shell: bash
+        run: python -m pip install --no-cache-dir semgrep
+
+      - name: Run Semgrep SAST
+        shell: bash
+        run: make sast
+
   test:
     name: Run Tests
+    needs: sast
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -31,9 +52,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Build Frontend
-        run: |
-          npm --prefix web ci
-          npm --prefix web run build
+        run: make build-frontend
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -42,7 +61,10 @@ jobs:
           cache: true
 
       - name: Run Backend Tests
-        run: go test -v -cover ./...
+        run: make test-backend
+
+      - name: Build Backend Binary
+        run: make build-backend
 
   build-and-push:
     name: Build & Push Container Image
