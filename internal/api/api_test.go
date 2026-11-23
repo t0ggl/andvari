@@ -642,6 +642,9 @@ func TestAPIHealth(t *testing.T) {
 	if health.Status != "healthy" {
 		t.Errorf("expected status 'healthy', got %q", health.Status)
 	}
+	if health.Version == "" {
+		t.Errorf("expected non-empty version in health response")
+	}
 	if health.UptimeSeconds < 0 {
 		t.Errorf("expected non-negative uptime, got %d", health.UptimeSeconds)
 	}

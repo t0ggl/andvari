@@ -5,6 +5,11 @@
     ":automergeMinor",
     ":automergePatch"
   ],
+  "dockerfile": {
+    "fileMatch": [
+      "(^|/)Dockerfile(\\.[^/]+)?$"
+    ]
+  },
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,

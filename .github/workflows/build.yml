@@ -38,7 +38,6 @@ jobs:
 
   test:
     name: Run Tests
-    needs: sast
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -66,9 +65,47 @@ jobs:
       - name: Build Backend Binary
         run: make build-backend
 
+  integration-test:
+    name: Container Integration Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build container image under test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: andvari:test
+          load: true
+          push: false
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
+
+      - name: Run container integration tests
+        run: make test-integration
+
   build-and-push:
     name: Build & Push Container Image
-    needs: test
+    needs: [sast, test, integration-test]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,19 +122,25 @@ jobs:
 
       - name: Choose next release version
         id: release
-        if: github.ref == 'refs/heads/main'
         run: |
+          image_paths=(
+            Dockerfile Makefile go.mod go.sum assets/icon.svg
+            web/package.json web/package-lock.json web/index.html web/tsconfig.json web/vite.config.ts web/web.go
+            ':(glob)cmd/**/*.go' ':(glob)internal/**/*.go' ':(glob)web/public/**' ':(glob)web/src/**'
+            ':(exclude,glob)**/*_test.go' ':(exclude,glob)web/src/**/*.test.*' ':(exclude,glob)web/src/**/*.spec.*' ':(exclude,glob)web/src/**/__tests__/**'
+          )
           latest=$(git tag --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ && !found++ { print }')
           if ! git merge-base --is-ancestor "$latest" HEAD; then
             exit 0
           fi
-          changed=$(git diff --name-only "$latest" HEAD)
+          changed=$(git diff --name-only "$latest" HEAD -- "${image_paths[@]}")
           if [[ -z "$changed" ]]; then
             exit 0
           fi
 
           code_changes=$(git diff --name-only "$latest" HEAD -- \
-            ':(glob)cmd/**/*.go' ':(glob)internal/**/*.go' ':(glob)pkg/**/*.go' ':(glob)pkg/**/*.sql' ':(glob)web/src/**' 'web/index.html' ':(exclude,glob)**/*_test.go' ':(exclude,glob)web/src/**/*.test.*' ':(exclude,glob)web/src/**/*.spec.*' ':(exclude,glob)web/src/**/__tests__/**')
+            ':(glob)cmd/**/*.go' ':(glob)internal/**/*.go' 'web/web.go' 'assets/icon.svg' ':(glob)web/public/**' ':(glob)web/src/**' 'web/index.html' \
+            ':(exclude,glob)**/*_test.go' ':(exclude,glob)web/src/**/*.test.*' ':(exclude,glob)web/src/**/*.spec.*' ':(exclude,glob)web/src/**/__tests__/**')
           series=${latest%.*}
           if [[ -n "$code_changes" ]]; then
             minor=${series##*.}
@@ -107,11 +150,11 @@ jobs:
             echo "tag=$series.$((10#$patch + 1))" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
       - name: Set up Docker Buildx
+        if: steps.release.outputs.tag != ''
         uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
 
       - name: Log in to GitHub Container Registry
         if: steps.release.outputs.tag != ''
@@ -123,6 +166,7 @@ jobs:
 
       - name: Extract metadata (tags, labels)
         id: meta
+        if: steps.release.outputs.tag != ''
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -133,16 +177,18 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
 
       - name: Build and push container image
+        if: steps.release.outputs.tag != ''
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ steps.release.outputs.tag != '' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.release.outputs.tag }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
 
   create-release:
     name: Create GitHub Release

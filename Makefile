@@ -3,7 +3,7 @@ TARGETOS ?= $(GOOS)
 TARGETARCH ?= $(GOARCH)
 LDFLAGS := -w -s
 
-.PHONY: test sast test-backend install-frontend build build-frontend build-backend
+.PHONY: test sast test-backend test-integration install-frontend build build-frontend build-backend
 
 test: sast
 	$(MAKE) build-frontend test-backend
@@ -14,6 +14,9 @@ sast:
 test-backend:
 	go vet ./...
 	go test -v -cover ./...
+
+test-integration:
+	./scripts/test-integration.sh
 
 install-frontend:
 	npm --prefix web ci

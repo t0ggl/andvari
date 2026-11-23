@@ -32,7 +32,7 @@ func main() {
 
 	cfg := config.Load()
 
-	log.Printf("Starting Andvari Supervisor (Warden)...")
+	log.Printf("Starting Andvari Supervisor (Warden) (version %s)...", config.Version)
 	log.Printf("Config path: %s", cfg.ConfigPath)
 	log.Printf("Storage path: %s", cfg.StoragePath)
 	log.Printf("Listen address: %s", cfg.ListenAddr)
