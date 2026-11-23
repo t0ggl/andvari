@@ -1,7 +1,14 @@
 .git
 .github
-web/node_modules
 bin
+docs
+scripts
+web/dist
+web/node_modules
+*.md
+*.nix
+renovate.json
+.impeccable
 .system_generated
 .agents
 .gemini

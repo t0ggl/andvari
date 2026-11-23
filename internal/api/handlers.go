@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/t0ggl/andvari/internal/auth"
+	"github.com/t0ggl/andvari/internal/config"
 	"github.com/t0ggl/andvari/internal/store"
 	"github.com/t0ggl/andvari/internal/warden"
 	"github.com/t0ggl/andvari/internal/worker"
@@ -30,6 +31,7 @@ func NewAPI(wc *warden.Client, oidc *auth.OIDCClient) *API {
 
 type HealthResponse struct {
 	Status        string `json:"status"`
+	Version       string `json:"version,omitempty"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Error         string `json:"error,omitempty"`
 }
@@ -51,6 +53,7 @@ func (a *API) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(HealthResponse{
 			Status:        "unhealthy",
+			Version:       config.Version,
 			UptimeSeconds: uptime,
 			Error:         err.Error(),
 		})
@@ -59,6 +62,7 @@ func (a *API) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(HealthResponse{
 		Status:        "healthy",
+		Version:       config.Version,
 		UptimeSeconds: uptime,
 	})
 }

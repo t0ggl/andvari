@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// Version is the application version set at build time via -ldflags (defaulting to "dev").
+var Version = "dev"
+
 type Config struct {
 	ConfigPath        string
 	StoragePath       string

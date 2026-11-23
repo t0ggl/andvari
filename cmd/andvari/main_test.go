@@ -78,6 +78,9 @@ func TestHealthCheckEndpoints(t *testing.T) {
 			if resp.Status != "healthy" {
 				t.Errorf("expected status 'healthy', got %q", resp.Status)
 			}
+			if resp.Version == "" {
+				t.Errorf("expected non-empty version, got %q", resp.Version)
+			}
 			if resp.UptimeSeconds < 0 {
 				t.Errorf("expected non-negative uptime, got %d", resp.UptimeSeconds)
 			}

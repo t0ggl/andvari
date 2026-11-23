@@ -1,12 +1,13 @@
 BIN_DIR ?= bin
-TARGETOS ?= $(GOOS)
-TARGETARCH ?= $(GOARCH)
-LDFLAGS := -w -s
+VERSION ?= dev
+export GOOS ?= $(TARGETOS)
+export GOARCH ?= $(TARGETARCH)
+LDFLAGS := -w -s -X github.com/t0ggl/andvari/internal/config.Version=$(VERSION)
 
-.PHONY: test sast test-backend install-frontend build build-frontend build-backend
+.PHONY: test sast test-backend install-frontend install-backend build build-frontend build-backend
 
 test: sast
-	$(MAKE) build-frontend test-backend
+	$(MAKE) install-frontend build-frontend install-backend test-backend
 
 sast:
 	./scripts/sast.sh
@@ -18,11 +19,15 @@ test-backend:
 install-frontend:
 	npm --prefix web ci
 
-build: build-frontend
+install-backend:
+	go mod download
+
+build: install-frontend install-backend
+	$(MAKE) build-frontend
 	$(MAKE) build-backend
 
-build-frontend: install-frontend
+build-frontend:
 	npm --prefix web run build
 
 build-backend:
-	CGO_ENABLED=0 GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/andvari ./cmd/andvari
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/andvari ./cmd/andvari
