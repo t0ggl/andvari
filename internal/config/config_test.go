@@ -101,26 +101,3 @@ func TestParseBytes(t *testing.T) {
 		}
 	}
 }
-
-func TestLoadVersion(t *testing.T) {
-	if got := loadVersion("/nonexistent/version/file"); got != "dev" {
-		t.Fatalf("expected default version 'dev', got %q", got)
-	}
-
-	tmp, err := os.CreateTemp(t.TempDir(), "version-*")
-	if err != nil {
-		t.Fatalf("CreateTemp: %v", err)
-	}
-	_ = tmp.Close()
-
-	if got := loadVersion(tmp.Name()); got != "dev" {
-		t.Fatalf("expected 'dev' for empty version file, got %q", got)
-	}
-
-	if err := os.WriteFile(tmp.Name(), []byte("v0.10.0\n"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if got := loadVersion(tmp.Name()); got != "v0.10.0" {
-		t.Fatalf("expected 'v0.10.0', got %q", got)
-	}
-}

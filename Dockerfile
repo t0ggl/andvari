@@ -33,8 +33,9 @@ COPY --from=frontend-builder /app/web/dist ./web/dist
 
 ARG TARGETOS=linux
 ARG TARGETARCH
+ARG VERSION=dev
 
-RUN GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" make build-backend BIN_DIR=/app/bin
+RUN GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" make build-backend BIN_DIR=/app/bin VERSION="${VERSION}"
 
 # Stage 3: Minimal Non-Root Runtime
 FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
@@ -51,10 +52,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/healthz || exit 1
 
 VOLUME ["/config", "/data"]
-
-ARG VERSION=dev
-COPY <<EOF /version
-${VERSION}
-EOF
 
 ENTRYPOINT ["/usr/local/bin/andvari"]

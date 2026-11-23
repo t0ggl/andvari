@@ -8,18 +8,8 @@ import (
 	"strings"
 )
 
-// Version is the application version loaded from /version at startup (defaulting to "dev").
-var Version = loadVersion("/version")
-
-func loadVersion(path string) string {
-	// nosemgrep: go.lang.security.audit.os-readfile-variable-path.os-readfile-variable-path -- path is internal constant "/version" or unit test temp file
-	if b, err := os.ReadFile(path); err == nil {
-		if v := strings.TrimSpace(string(b)); v != "" {
-			return v
-		}
-	}
-	return "dev"
-}
+// Version is the application version set at build time via -ldflags (defaulting to "dev").
+var Version = "dev"
 
 type Config struct {
 	ConfigPath        string
