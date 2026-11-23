@@ -8,7 +8,7 @@ Do not stop after making local code changes or wait for manual prompting at each
 
 - **Always use feature branches:** Never commit or push changes directly to `main`. Create and switch to a descriptive feature branch (e.g., `feat/<feature-name>`, `fix/<issue-name>`).
 - **`Makefile` is canonical:** All build, install, SAST, and test steps live in `Makefile` and nowhere else. `Dockerfile`, GitHub Actions workflows, and local verification must call `Makefile` targets rather than duplicating tool commands.
-- **Build & Test:** Run the `Makefile` verification targets via `nix-shell` (e.g., `nix-shell --run "make test"` and `nix-shell --run "make build"`) before pushing.
+- **Build & Test:** Run `make test` and `make build` before pushing.
 - **Create a Pull Request:** Push the feature branch to `origin` and open a Pull Request targeting `main`.
 - **Merge Criteria & Autonomous Merge:** Monitor and wait for all automated tests and CI checks on GitHub Actions (`.github/workflows/build.yml`) to pass. Once checks pass, rebase merge the PR into `main`. Never merge with failing or pending CI checks.
 - **Automated releases:** Successful main builds publish the versioned image to GHCR, then tag the commit and create the GitHub release in the same workflow. Changes to application source bump the minor version. Other image build input changes bump the patch version.
@@ -16,7 +16,7 @@ Do not stop after making local code changes or wait for manual prompting at each
 
 ## 2. Environment & Tooling
 
-- **Nix Shell Environment:** Development tools (Go, Node.js, npm) are managed via `shell.nix`. Invoke `Makefile` targets inside `nix-shell --run "make <target>"`.
+- **Development Tools:** Use Go, Node.js, and npm available on your system. Run development targets through `make`.
 
 ## 3. Design & Quality Standards
 
