@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     branches:
       - main
@@ -88,10 +90,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Choose next release version
+      - name: Choose release version
         id: release
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'push'
         run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           code_paths=(
             ':(glob)cmd/**/*.go' ':(glob)internal/**/*.go' ':(glob)web/src/**' ':(glob)web/public/**'
             'web/index.html' 'web/web.go' 'assets/icon.svg'
