@@ -137,17 +137,11 @@ pass = <run 'rclone obscure your_token'>
 
 ## Development
 
-A reproducible development environment is provided via Nix:
+Use Go, Node.js, and npm from your system.
 
 ```bash
-# Enter dev shell with Go, Node.js 22, GitHub CLI, and gopls
-nix-shell
-
-# Run backend tests with coverage
-go test -v -cover ./...
-
-# Build web frontend
-npm --prefix web run build
+make test
+make build
 
 # Run server in dev mode
 DEV_MODE=true LISTEN_ADDR=:8080 CONFIG_PATH=./dev-config STORAGE_PATH=./dev-data go run ./cmd/andvari
